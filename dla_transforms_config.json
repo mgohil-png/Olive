@@ -1,0 +1,50 @@
+{
+  "input_model": {
+    "type": "ONNXModel",
+    "config": {
+      "model_path": "C:\\Users\\mgohil\\Olive\\models\\Model_PSA_v6.3.onnx"
+    }
+  },
+  "passes": {
+    "dla_transforms": {
+      "type": "GraphSurgeries",
+      "config": {
+        "surgeries": [
+          {"surgeon": "RemoveQDQ"},
+          {"surgeon": "RemoveDeqLin"},
+          {"surgeon": "ReshapeClipTransposeClipReshape"},
+          {"surgeon": "ReshapeQDQReduceSumGeneric"},
+          {"surgeon": "DecomposeLSTM"},
+          {"surgeon": "Non4DSliceAxis"},
+          {"surgeon": "Split"},
+          {"surgeon": "Non4DModelInputs"},
+          {"surgeon": "Non4DModelOutputs"},
+          {"surgeon": "MatMulToTransposeConvTranspose"},
+          {"surgeon": "ReshapeClipReduceSum"},
+          {"surgeon": "Non4DReshape"},
+          {"surgeon": "ArgMax"},
+          {"surgeon": "StandaloneReduceSum"},
+          {"surgeon": "ReduceMinKeepdimsGT"},
+          {"surgeon": "Non4DConcatAxis"},
+          {"surgeon": "RemoveIntermediarySqueezeAndUnsqueeze"},
+          {"surgeon": "SqueezeUnsqueezeToReshape"},
+          {"surgeon": "Gather"},
+          {"surgeon": "Non4DInitializers"},
+          {"surgeon": "Non4DExpand"},
+          {"surgeon": "Non4DTile"},
+          {"surgeon": "Flatten"},
+          {"surgeon": "Non4DTranspose"},
+          {"surgeon": "Non4DLpNorm"},
+          {"surgeon": "RemoveUnusedInitializers"},
+          {"surgeon": "FixInstanceNormChannelMismatchPSD6"},
+          {"surgeon": "TopK"}
+
+        ]
+      }
+    }
+  },
+  "engine": {
+    "output_dir": "C:\\Users\\mgohil\\Olive\\models",
+    "clean_cache": true
+  }
+} 
