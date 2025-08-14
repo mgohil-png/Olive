@@ -28,8 +28,11 @@ from olive.passes.onnx.common import get_external_data_config, model_proto_to_ol
 from olive.passes.onnx.onnx_dag import OnnxDAG
 from olive.passes.pass_config import BasePassConfig, PassConfigParam
 
+from .symbolic_shape_infer import SymbolicShapeInference
+
 logger = logging.getLogger(__name__)
 
+clip_needed = True
 
 # pylint: disable=W0621
 
@@ -1385,22 +1388,126 @@ class ReplaceAttentionMaskValue(ProtoSurgeon):
             return tensor_value_new
         return None
 
-
 class RemoveQDQ(ProtoSurgeon):
-    """Remove QuantizeLinear and DequantizeLinear node pairs from the graph.
-
-    Finds Q->DQ patterns and removes them, directly connecting their inputs/outputs.
-    Optionally keeps Clip nodes after graph inputs for value range constraints.
-    """
-
-    def __init__(self, keep_clip_after_inputs: bool = False):
-        self.keep_clip_after_inputs = keep_clip_after_inputs
-
     def __call__(self, model: ModelProto):
-        from olive.passes.onnx.dla_transforms import transform_remove_qdq
-
-        transform_remove_qdq(model, keep_clip_after_inputs=self.keep_clip_after_inputs)
+        from olive.passes.onnx.dla_transforms import transform_qdq_to_clip,transform_remove_qdq
+        if(clip_needed):
+            transform_qdq_to_clip(model)
+        else:
+            transform_remove_qdq(model)
         return model
+
+
+class StandaloneReduceSum(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_standalone_reducesum_reducemean
+
+        transform_standalone_reducesum_reducemean(model)
+        return model
+    
+
+class ReshapeQDQReduceSumGeneric(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_reshape_qdq_reducesum_generic
+
+        transform_reshape_qdq_reducesum_generic(model)
+        return model
+
+
+class RemoveUnusedInitializers(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_remove_unused_initializers
+
+        transform_remove_unused_initializers(model)
+        return model
+
+
+class ReduceMaxMin(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_reducemax_min
+
+        transform_reducemax_min(model)
+        return model
+
+
+class ReduceMinKeepdimsGT(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_reducemin_keepdims_GT
+        transform_reducemin_keepdims_GT(model)
+        return model
+
+
+class Non4DTile(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_non4d_tile
+        transform_non4d_tile(model)
+        return model
+
+
+class ArgMax(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_argmax
+        transform_argmax(model)
+        return model
+
+
+class Non4DConcatAxis(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_non4d_concat_axis
+        transform_non4d_concat_axis(model)
+        return model
+
+class Split(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_split
+        transform_split(model)
+        return model
+    
+class TopK(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_topk
+        transform_topk(model)
+        return model
+
+class ReshapeTransposeReshape(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_reshape_transpose_reshape
+        transform_reshape_transpose_reshape(model)
+        return model
+    
+class ReshapeClipTransposeClipReshape(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_reshape_clip_transpose_clip_reshape
+        transform_reshape_clip_transpose_clip_reshape(model)
+        return model
+
+class SqueezeUnsqueezeToReshape(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_squeeze_unsqueeze_to_reshape
+        transform_squeeze_unsqueeze_to_reshape(model)
+        return model
+
+
+class Non4DSliceAxis(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_non4d_slice_axis
+        transform_non4d_slice_axis(model)
+        return model
+
+
+class FixInstanceNormChannelMismatchPSD6(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_fix_instancenorm_channel_mismatch_PSD6
+        transform_fix_instancenorm_channel_mismatch_PSD6(model)
+        return model
+
+
+class DecomposeLSTM(ProtoSurgeon):
+    def __call__(self, model: ModelProto):
+        from olive.passes.onnx.dla_transforms import transform_decompose_lstm
+        transform_decompose_lstm(model)
+        return model
+
 
 
 class MatMulToTransposeConvTranspose(ProtoSurgeon):
@@ -1490,22 +1597,6 @@ class Non4DModelOutputs(ProtoSurgeon):
         return model
 
 
-class StandaloneReduceSum(ProtoSurgeon):
-    """Set keepdims=1 in the ReduceSum attributes, and increment the axes from [1] to [2].
-
-    Modifies standalone ReduceSum operations (not already transformed) to:
-    - Set keepdims=1 to preserve dimensions
-    - Change reduction axis from [1] to [2] for DLA compatibility
-    - Skip if axes is already [-1] (reduce last dimension)
-
-    TODO: use -axes instead of fixed value
-    """
-
-    def __call__(self, model: ModelProto):
-        from olive.passes.onnx.dla_transforms import transform_standalone_reducesum
-
-        transform_standalone_reducesum(model)
-        return model
 
 
 class Gather(ProtoSurgeon):
@@ -1776,14 +1867,21 @@ class GraphSurgeries(Pass):
         self, model: ONNXModelHandler, config: type[BasePassConfig], output_model_path: str
     ) -> ONNXModelHandler:
         output_model_path = resolve_onnx_path(output_model_path, Path(model.model_path).name)
-
         surgeries = config.surgeries
         onnx_model = model.load_model()
+        save_as_external_data_false = False
+        if(onnx_model.ByteSize() > 2147483648):
+            save_as_external_data_false = True
+        onnx_model = SymbolicShapeInference.infer_shapes(onnx_model,save_as_external_data=save_as_external_data_false)
         for surgery in surgeries:
             logger.info("Applying surgery: %s", surgery)
             surgeon_instance = self.init_surgeon_instance(surgery)
             onnx_model = surgeon_instance(onnx_model)
-
+            
+        if(onnx_model.ByteSize() > 2147483648):
+            save_as_external_data_false = True
+            
+        onnx_model = SymbolicShapeInference.infer_shapes(onnx_model,save_as_external_data=save_as_external_data_false)
         return model_proto_to_olive_model(onnx_model, output_model_path, config)
 
     def init_surgeon_instance(self, surgery):
