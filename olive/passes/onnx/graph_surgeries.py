@@ -28,7 +28,7 @@ from olive.passes.onnx.common import get_external_data_config, model_proto_to_ol
 from olive.passes.onnx.onnx_dag import OnnxDAG
 from olive.passes.pass_config import BasePassConfig, PassConfigParam
 
-from .symbolic_shape_infer import SymbolicShapeInference
+from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
 
 logger = logging.getLogger(__name__)
 
@@ -1033,7 +1033,6 @@ class MatMulAddToGemm(ProtoSurgeon):
     """
 
     def __call__(self, model: ModelProto):
-        from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
 
         try:
             model = SymbolicShapeInference.infer_shapes(model, auto_merge=True)
@@ -1867,6 +1866,8 @@ class GraphSurgeries(Pass):
         output_model_path = resolve_onnx_path(output_model_path, Path(model.model_path).name)
         surgeries = config.surgeries
         onnx_model = model.load_model()
+        # Since modelproto has 2GB size limit,
+        # weights are stored as external data if model size > 2GB
         save_as_external_data_false = False
         if(onnx_model.ByteSize() > 2147483648):
             save_as_external_data_false = True
@@ -1875,7 +1876,8 @@ class GraphSurgeries(Pass):
             logger.info("Applying surgery: %s", surgery)
             surgeon_instance = self.init_surgeon_instance(surgery)
             onnx_model = surgeon_instance(onnx_model)
-            
+        # Since modelproto has 2GB size limit,
+        # weights of transformed model are stored as external data if model size > 2GB
         if(onnx_model.ByteSize() > 2147483648):
             save_as_external_data_false = True
             
