@@ -335,7 +335,7 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
     input_shape = None
     for node in graph.node:
         # --- Remove intermediary Squeeze nodes ---
-        if(len(node.input)>0):input_shape = get_shape(node.input[0])  #### without this if condition, it will give error for constant op (GT)
+        if(len(node.input)>0):input_shape = get_shape(node.input[0])
 
         # --- Handle special case: Squeeze with axis 2 and 5D input ---
         if node.op_type == 'Squeeze' and input_shape is not None and len(input_shape) == 5:  ############### added as squeeze was removing axis 2 and not 0...very model specific approach used here, fixing the size and axis in the condition, but this can be improved
@@ -411,7 +411,7 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
                     break
             if axes is None:
                 for n in graph.node:
-                    if n.op_type == "Constant" and n.output[0] == node.input[1]: #### GT has value stored in constant op
+                    if n.op_type == "Constant" and n.output[0] == node.input[1]:
                         for attr in n.attribute:
                             if attr.name == "value":
                                 axes = numpy_helper.to_array(attr.t)
@@ -873,16 +873,15 @@ def transform_reducemin_keepdims_GT(model):
                 if attr.name == 'keepdims':
                     attr.i = 1
 
-
-def transform_standalone_reducesum_reducemean(model):  #### To make it suitable for running F2, i have added reducemean and to make it suitable for GT, i have added reducemin as the core tranformation is exactly same
+### Transformations are same forReduceSum, ReduceMean, ReduceMax
+### Different Models can have different op_type like ReduceMin, ReduceMax, ReduceMean
+def transform_standalone_reducesum_reducemean_reducemax(model):
     graph = model.graph
     reshape_counter = 0  # Add counter for unique reshape shape names
     for node in graph.node:
         # A single ReduceSum, not transformed with reshape_reducesum_to_slice_reducesum_concat
         if (node.op_type == 'ReduceSum' or node.op_type == 'ReduceMean' or node.op_type == 'ReduceMax') and not 'transformed' in node.name:
-            # print(node.name)
-            # print(node)
-            # set keepdims = 1
+
             keepdims_was_zero = False
             for attr in node.attribute:
                 if attr.name == 'keepdims':
@@ -1100,13 +1099,13 @@ def transform_gatherelements(model):
                     indices_array = np.expand_dims(existing_indices, axis=0)  # Eg.[12,64,64]->[1,12,64,64]
                 else:
                     indices_array = existing_indices
-            indices_initializer = numpy_helper.from_array(indices_array, name=indices_initializer_name)
-            # Remove the old initializer if it exists
-            if initializer_to_remove is not None:
-                model.graph.initializer.remove(initializer_to_remove)
+                indices_initializer = numpy_helper.from_array(indices_array, name=indices_initializer_name)
+                # Remove the old initializer if it exists
+                if initializer_to_remove is not None:
+                    model.graph.initializer.remove(initializer_to_remove)
             
-            # Add the new initializer
-            model.graph.initializer.append(indices_initializer)
+                # Add the new initializer
+                model.graph.initializer.append(indices_initializer)
     print(f"Updated {cnt} GatherElements indices")
 
 def transform_non4d_initializers(model):
