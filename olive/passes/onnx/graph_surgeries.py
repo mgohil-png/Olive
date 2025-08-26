@@ -1398,11 +1398,11 @@ class RemoveQDQ(ProtoSurgeon):
 
 class StandaloneReduceSum(ProtoSurgeon):
     def __call__(self, model: ModelProto):
-        from olive.passes.onnx.dla_transforms import transform_standalone_reducesum_reducemean
+        from olive.passes.onnx.dla_transforms import transform_standalone_reducesum_reducemean_reducemax
 
-        transform_standalone_reducesum_reducemean(model)
+        transform_standalone_reducesum_reducemean_reducemax(model)
         return model
-    
+
 
 class ReshapeQDQReduceSumGeneric(ProtoSurgeon):
     def __call__(self, model: ModelProto):
@@ -1460,7 +1460,7 @@ class Split(ProtoSurgeon):
         from olive.passes.onnx.dla_transforms import transform_split
         transform_split(model)
         return model
-    
+
 class TopK(ProtoSurgeon):
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_topk
@@ -1472,7 +1472,7 @@ class ReshapeTransposeReshape(ProtoSurgeon):
         from olive.passes.onnx.dla_transforms import transform_reshape_transpose_reshape
         transform_reshape_transpose_reshape(model)
         return model
-    
+
 class ReshapeClipTransposeClipReshape(ProtoSurgeon):
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_reshape_clip_transpose_clip_reshape
@@ -1867,22 +1867,15 @@ class GraphSurgeries(Pass):
         output_model_path = resolve_onnx_path(output_model_path, Path(model.model_path).name)
         surgeries = config.surgeries
         onnx_model = model.load_model()
-        # Since modelproto has 2GB size limit,
-        # weights are stored as external data if model size > 2GB
-        save_as_external_data_false = False
-        if(onnx_model.ByteSize() > 2147483648):
-            save_as_external_data_false = True
-        onnx_model = SymbolicShapeInference.infer_shapes(onnx_model,save_as_external_data=save_as_external_data_false)
+
+        onnx_model = SymbolicShapeInference.infer_shapes(onnx_model)
+
         for surgery in surgeries:
             logger.info("Applying surgery: %s", surgery)
             surgeon_instance = self.init_surgeon_instance(surgery)
             onnx_model = surgeon_instance(onnx_model)
-        # Since modelproto has 2GB size limit,
-        # weights of transformed model are stored as external data if model size > 2GB
-        if(onnx_model.ByteSize() > 2147483648):
-            save_as_external_data_false = True
-            
-        onnx_model = SymbolicShapeInference.infer_shapes(onnx_model,save_as_external_data=save_as_external_data_false)
+
+        onnx_model = SymbolicShapeInference.infer_shapes(onnx_model)
         return model_proto_to_olive_model(onnx_model, output_model_path, config)
 
     def init_surgeon_instance(self, surgery):
