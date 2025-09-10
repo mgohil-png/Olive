@@ -69,7 +69,7 @@ def get_initializer_by_name(model, init_name):
 def calculate_clip_range(node, model):
     x_scale = get_initializer_by_name(model, node.input[1])
     x_zero_point = get_initializer_by_name(model, node.input[2])
-    assert (x_scale, f"{node.name} should have x_scale value")
+    assert x_scale, f"{node.name} should have x_scale value"
     int_max = np.int32(65535 if x_zero_point.dtype == np.uint16 else 255 if x_zero_point.dtype == np.uint8 else 127)
     int_min = np.int32(0 if x_zero_point.dtype == np.uint16 else 0 if x_zero_point.dtype == np.uint8 else -128)
     if x_zero_point is None:
@@ -91,7 +91,7 @@ def calculate_clip_range(node, model):
 
 
 ###
-# Replace 2D Gemm/MatMul with Transpose and 1x1 Conv​
+# Replace 2D Gemm/MatMul with Transpose and 1x1 Conv
 #
 # Modification requirement:
 # When C==1, convert it to 1x1 Conv using TRANSPOSE + CONV + TRANSPOSE sequence
@@ -112,10 +112,10 @@ def transform_matmul_to_transpose_conv_transpose(model):
         if node.op_type == "MatMul" or node.op_type == "Gemm":
             need_transform = False
 
-            for input in node.input:
+            for input_ in node.input:
                 # Input is either in initializer or value_info
-                if (input in initializer_dim_map and initializer_dim_map[input] != 4) or (
-                    input in tensor_name_dim_map and len(tensor_name_dim_map[input]) != 4
+                if (input_ in initializer_dim_map and initializer_dim_map[input_] != 4) or (
+                    input_ in tensor_name_dim_map and len(tensor_name_dim_map[input_]) != 4
                 ):
                     need_transform = True
                     break
@@ -134,28 +134,22 @@ def transform_matmul_to_transpose_conv_transpose(model):
         # If C (channel) dimesion is 1, needs to add Transposes around Conv.
         # Otherwise, no need to add Transposes for now.
         def check_to_apply_transpose(conv_node):
-            initializer_names = set(init.name for init in model.graph.initializer)
+            initializer_names = {init.name for init in model.graph.initializer}
             bool_value = False
             if (
-                node.input[1] in initializer_names
+                conv_node.input[1] in initializer_names
             ):  #### if second input is initializer with suitable conditions, we need to trans-conv-transpose
                 for init in model.graph.initializer:
-                    if init.name == node.input[1]:
+                    if init.name == conv_node.input[1]:
                         shape = list(init.dims)
-                        if len(shape) == 2:
+                        if len(shape) == 2 or (len(shape) == 3 and shape[0] == 1) or (len(shape) == 4 and shape[1] == 1):
                             bool_value = True
-                        elif len(shape) == 3:
-                            if shape[0] == 1:
-                                bool_value = True
-                        elif len(shape) == 4:
-                            if shape[1] == 1:
-                                bool_value = True
                 if bool_value:
                     return bool_value
             else:
-                input = conv_node.input[1]
-                if input in tensor_name_dim_map:
-                    shape = tensor_name_dim_map[input]
+                input_ = conv_node.input[1]
+                if input_ in tensor_name_dim_map:
+                    shape = tensor_name_dim_map[input_]
                     if len(shape) == 2:
                         # if shape[1] != 1:  # The 2D tensor (MxN, width and height) will later adding leading dimensions to 4D with 1x1xMxN #### changed from != to == ans removed condition on shape[0] and removed condition on shape[1]
                         bool_value = True
@@ -170,9 +164,9 @@ def transform_matmul_to_transpose_conv_transpose(model):
             if not (bool_value):
                 return bool_value
             bool_value = False
-            input = conv_node.input[0]
-            if input in tensor_name_dim_map:
-                shape = tensor_name_dim_map[input]
+            input_ = conv_node.input[0]
+            if input_ in tensor_name_dim_map:
+                shape = tensor_name_dim_map[input_]
                 if (
                     len(shape) == 2 and shape[1] != 1
                 ):  # The 2D tensor (MxN, width and height) will later adding leading dimensions to 4D with 1x1xMxN #### changed from != to == ans removed condition on shape[0]
@@ -198,7 +192,7 @@ def transform_matmul_to_transpose_conv_transpose(model):
 
         # Add Transpose if needed
         if need_to_apply_first_transpose:  #### START OF block of items newly added
-            initializer_names = set(init.name for init in model.graph.initializer)
+            initializer_names = {init.name for init in model.graph.initializer}
 
             # Transpose for first input (always dynamic in this context)
             transpose_before_node_0 = helper.make_node(
@@ -284,10 +278,9 @@ def transform_matmul_to_transpose_conv_transpose(model):
         trans_b = False
         if node.op_type == "Gemm":
             for attr in node.attribute:
-                if attr.name == "transB":
-                    if attr.i == 1:
-                        trans_b = True
-                        break
+                if attr.name == "transB" and attr.i == 1:
+                    trans_b = True
+                    break
 
         if need_to_apply_transpose:
             update_initializers(graph, node.input[1], initializers_to_remove, initializers_to_add, trans_b)
@@ -319,8 +312,8 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
     from onnx import helper, numpy_helper
 
     graph = model.graph
-    input_names = set(input.name for input in graph.input)
-    output_names = set(output.name for output in graph.output)
+    input_names = {input_.name for input_ in graph.input}
+    output_names = {output.name for output in graph.output}
     tensor_name_dim_map = get_tensor_shape_map(graph.value_info)
     initializer_dim_map = {init.name: list(init.dims) for init in graph.initializer}
 
@@ -456,7 +449,7 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
                 out_shape.insert(axis, 1)
             # If input is 2D and output is 3D, prepend a 1
             if len(input_shape) == 2 and len(out_shape) == 3:
-                out_shape = [1] + out_shape
+                out_shape = [1, *out_shape]
 
             # Only replace if:
             # - input is 2D and output is 4D
@@ -510,7 +503,6 @@ def transform_qdq_to_clip(model):
         {},
     )  # quantize_output_name -> quantize_node, dequantize_input_name -> dequantize_node
     node_datatype_map = {}  # node_name -> datatype
-    i = 0
     graph = model.graph
     clip_range = {}  # deq_input_name -> (clip_min, clip_max)
     for node in graph.node:
@@ -527,7 +519,7 @@ def transform_qdq_to_clip(model):
             deqlin_name_node_map[node.input[0]] = node
             x_scale = get_initializer_by_name(model, node.input[1])
             x_zero_point = get_initializer_by_name(model, node.input[2])
-            assert (x_scale, f"{node.name} should have x_scale value")
+            assert x_scale, f"{node.name} should have x_scale value"
             int_max = np.int32(
                 65535 if x_zero_point.dtype == np.uint16 else 255 if x_zero_point.dtype == np.uint8 else 127
             )
@@ -655,7 +647,8 @@ def transform_remove_qdq(model, keep_clip_after_inputs=False):
                     num_connected_qdq_node_pair += 1
                     if num_connected_qdq_node_pair > 5:
                         logger.info(
-                            f"Number of connected QDQ node pair is {num_connected_qdq_node_pair} which is not normal."
+                            "Number of connected QDQ node pair is %d which is not normal.",
+                            num_connected_qdq_node_pair
                         )
                         sys.exit(1)
 
@@ -673,6 +666,9 @@ def transform_remove_qdq(model, keep_clip_after_inputs=False):
 def transform_remove_deqlin(model):
     def dequantize_initializer(deq_initializers, node, graph):
         node_input = node.input
+        x = None
+        scale = None
+        zero_point = None
         for init in deq_initializers:
             if init.name == node_input[0]:
                 x = numpy_helper.to_array(init).astype(np.int32)
@@ -698,15 +694,12 @@ def transform_remove_deqlin(model):
 
     cnt = 0
     graph = model.graph
-    initializer_names = set([init.name for init in graph.initializer])
+    initializer_names = {init.name for init in graph.initializer}
     deqlin_output_initializer_mapping = {}
     nodes_to_remove = []
     for node in graph.node:
         if node.op_type == "DequantizeLinear" and len(node.input) > 0 and node.input[0] in initializer_names:
-            deq_initializers = []
-            for init in graph.initializer:
-                if init.name in node.input:
-                    deq_initializers.append(init)
+            deq_initializers = [init for init in graph.initializer if init.name in node.input]
             dequantized_arr = dequantize_initializer(deq_initializers, node, graph).astype(np.float32)
             # Create new initializer with fresh name and float32 datatype
             new_initializer_name = node.input[0] + "_dequantized"
@@ -718,9 +711,9 @@ def transform_remove_deqlin(model):
             deqlin_output_initializer_mapping[node.output[0]] = new_initializer_name
             nodes_to_remove.append(node)
         # Replace the node input after DequantizeLinear with initializer
-        for i, input in enumerate(node.input):
-            if input in deqlin_output_initializer_mapping:
-                node.input[i] = deqlin_output_initializer_mapping[input]
+        for i, input_ in enumerate(node.input):
+            if input_ in deqlin_output_initializer_mapping:
+                node.input[i] = deqlin_output_initializer_mapping[input_]
 
     # Remove the nodes
     for node in nodes_to_remove:
@@ -755,10 +748,10 @@ def transform_non4d_model_inputs(model):
                             if len(existing_unsqueeze_axes) + dims == 4:
                                 continue
                             if existing_unsqueeze_axes.tolist()[0] == -1:
-                                unsqueeze_arr = np.array([-1] + [0], dtype=np.int64)
+                                unsqueeze_arr = np.array([-1, 0], dtype=np.int64)
                             else:
                                 unsqueeze_arr = np.array(
-                                    [existing_unsqueeze_axes.tolist()[0] + 1] + [0], dtype=np.int64
+                                    [existing_unsqueeze_axes.tolist()[0] + 1, 0], dtype=np.int64
                                 )
                             new_unsqueeze_axes_name = node.name + "unsqueeze_axes_transformed"
                             unsqueeze_axes = numpy_helper.from_array(unsqueeze_arr, new_unsqueeze_axes_name)
@@ -796,10 +789,10 @@ def transform_non4d_model_inputs(model):
                         # Calculate the new shape after unsqueeze
                         if dims == 2:
                             # [0,1] means add dimensions at positions 0 and 1
-                            output_shape = [1, 1] + input_shape
+                            output_shape = [1, 1, *input_shape]
                         else:  # dims == 3
                             # [0] means add dimension at position 0
-                            output_shape = [1] + input_shape
+                            output_shape = [1, *input_shape]
 
                         # Create value_info for the unsqueezed output
                         output_vi = helper.make_tensor_value_info(
@@ -807,10 +800,10 @@ def transform_non4d_model_inputs(model):
                         )
                         value_info_to_add.append(output_vi)
 
-                        for node in graph.node:
-                            for i, node_input_name in enumerate(node.input):
+                        for graph_node in graph.node:
+                            for i, node_input_name in enumerate(graph_node.input):
                                 if node_input_name == graph_input.name:
-                                    node.input[i] = unsqueezed_input_name
+                                    graph_node.input[i] = unsqueezed_input_name
                     cnt += 1
 
     # Add all new unsqueeze nodes
@@ -842,7 +835,7 @@ def transform_non4d_model_outputs(model):
         if output_dim == 1:
             can_add_squeeze = False
             for node in graph.node:
-                for i, node_output_name in enumerate(node.output):
+                for node_output_name in node.output:
                     if node_output_name == graph_output.name:
                         if get_shape_from_graph(graph, node_output_name) != get_shape_from_graph(
                             graph, graph_output.name
@@ -1018,14 +1011,14 @@ def transform_standalone_reducesum_reducemean(
                             graph.node.insert(list(graph.node).index(node) + 1, reshape_node)
 
                             if dims == 3:
-                                input_shape = [1] + input_shape
+                                input_shape = [1, *input_shape]
                             elif dims == 2:
-                                input_shape = [1, 1] + input_shape
+                                input_shape = [1, 1, *input_shape]
                             input_shape = list(np.delete(np.array(input_shape), new_axes))
                             if len(input_shape) == 3:
-                                input_shape = [1] + input_shape
+                                input_shape = [1, *input_shape]
                             elif len(input_shape) == 2:
-                                input_shape = [1, 1] + input_shape
+                                input_shape = [1, 1, *input_shape]
                             input_shape = list(np.array(input_shape, dtype=np.int64))
 
                             reshape_shape = np.array(input_shape, dtype=np.int64)  # Example shape
@@ -1196,32 +1189,27 @@ def transform_gatherelements(model):
 
 def transform_non4d_initializers(model):
     # Purpose of need_to_expand_4D_init_names is to avoid expanding some 1D initializers such as axes, slice_begin
-    need_to_expand_4D_init_names = []
+    need_to_expand_4d_init_names = []
     skip_init_names = []
-    just_append_to_beginning = []
     unary_dim_at_front_init_names = []
-    avoid_expanding_4D_init_names = []
+    avoid_expanding_4d_init_names = []
     for node in model.graph.node:
         if node.op_type in ["Div", "Sub", "Mul", "Add"]:
-            for input in node.input:
-                need_to_expand_4D_init_names.append(input)
+            need_to_expand_4d_init_names.extend(node.input)
         if node.op_type in ["MatMul"]:
-            for input in node.input:
-                skip_init_names.append(input)
+            skip_init_names.extend(node.input)
         if node.op_type in ["Gemm", "Where", "Gather", "Split"]:
-            for input in node.input:
-                unary_dim_at_front_init_names.append(input)
+            unary_dim_at_front_init_names.extend(node.input)
         if node.op_type in ["Unsqueeze"]:  #### Avoid expanding 4D for Unsqueeze inputs
-            for input in node.input:
-                avoid_expanding_4D_init_names.append(input)
+            avoid_expanding_4d_init_names.extend(node.input)
 
     initializers_to_add = []
     initializer_to_remove = []
     for initializer in model.graph.initializer:
         if (
             len(initializer.dims) == 1
-            and initializer.name in need_to_expand_4D_init_names
-            and initializer.name not in avoid_expanding_4D_init_names
+            and initializer.name in need_to_expand_4d_init_names
+            and initializer.name not in avoid_expanding_4d_init_names
         ):
             # 1D: [K] -> [1x1x1xK]
             initializer.dims.insert(0, 1)
@@ -1229,23 +1217,23 @@ def transform_non4d_initializers(model):
             initializer.dims.insert(0, 1)
         elif (
             len(initializer.dims) == 2
-            and initializer.name in need_to_expand_4D_init_names
-            and initializer.name not in avoid_expanding_4D_init_names
+            and initializer.name in need_to_expand_4d_init_names
+            and initializer.name not in avoid_expanding_4d_init_names
         ):
             initializer.dims.insert(0, 1)
             initializer.dims.insert(0, 1)
         elif (
             len(initializer.dims) == 2
             and initializer.name in unary_dim_at_front_init_names
-            and initializer.name not in avoid_expanding_4D_init_names
+            and initializer.name not in avoid_expanding_4d_init_names
         ):
             # 2D: [K, C] -> [1, 1, K, C]
-            new_dims = [1, 1] + list(initializer.dims)
+            new_dims = [1, 1, *list(initializer.dims)]
             initializer.dims[:] = new_dims
         elif (
             len(initializer.dims) == 2
             and initializer.name not in skip_init_names
-            and initializer.name not in avoid_expanding_4D_init_names
+            and initializer.name not in avoid_expanding_4d_init_names
         ):
             # 2D [CxK] -> [KxCx1x1]
             c, k = initializer.dims[0], initializer.dims[1]
@@ -1260,9 +1248,9 @@ def transform_non4d_initializers(model):
             initializer.dims.insert(3, 1)
 
             # new_dims = [1] + list(initializer.dims)
-        elif len(initializer.dims) == 3 and initializer.name not in avoid_expanding_4D_init_names:
+        elif len(initializer.dims) == 3 and initializer.name not in avoid_expanding_4d_init_names:
             # initializer.dims.insert(0, 1)
-            new_dims = [1] + list(initializer.dims)
+            new_dims = [1, *list(initializer.dims)]
             initializer.dims[:] = new_dims
 
     [model.graph.initializer.remove(init) for init in initializer_to_remove]
@@ -1272,7 +1260,6 @@ def transform_non4d_initializers(model):
 def transform_remove_all_tensor_value_shapes(model):
     for value_info in model.graph.value_info:
         tensor_type = value_info.type.tensor_type
-        dims = 0
         if tensor_type.HasField("shape"):
             tensor_type.ClearField("shape")
 
@@ -1462,7 +1449,7 @@ def transform_flatten(model):
 # Debug function to add intermediate tensors to outputs
 def transform_add_intermediate_tensors_to_outputs(model, intermediate_tensor_to_add=None):
     # Get existing output names
-    existing_outputs = set(output.name for output in model.graph.output)
+    existing_outputs = {output.name for output in model.graph.output}
 
     # Collect all intermediate tensor names from node outputs
     if intermediate_tensor_to_add is None:
@@ -1874,6 +1861,7 @@ def transform_reducemax(model):
 
 def transform_argmax(model):
     """For all ArgMax nodes, if input is 2D, increment axis by 2; if input is 3D, increment axis by 1.
+    
     Also set keepdims=1.
     If keepdims=0, add a Reshape to shift the dimension to the beginning.
     """
@@ -1931,9 +1919,9 @@ def transform_argmax(model):
                     # For 3D input: [1, M, N] -> [1, 1, 1, N]
                     axes = input_shape
                     if len(axes) == 2:
-                        axes = [1, 1] + axes
+                        axes = [1, 1, *axes]
                     elif len(axes) == 3:
-                        axes = [1] + axes
+                        axes = [1, *axes]
                     axes.pop(axis)
                     axes.insert(0, 1)
                     reshape_shape = numpy_helper.from_array(np.array(axes, dtype=np.int64), reshape_shape_name)
@@ -2045,6 +2033,7 @@ def transform_topk(model):
 
 def transform_non4d_concat_axis(model):
     """For all Concat nodes, if all inputs are 3D, increment axis by 1; if all are 2D, increment axis by 2.
+
     Should be applied at the beginning of the transform pipeline.
     """
     cnt_3d = 0
@@ -2065,7 +2054,7 @@ def transform_non4d_concat_axis(model):
                     input_shapes.append(shape)
             # Only proceed if all input shapes are found
             if len(input_shapes) == len(node.input):
-                dims_set = set(len(s) for s in input_shapes)
+                dims_set = {len(s) for s in input_shapes}
                 if len(dims_set) == 1:
                     dims = dims_set.pop()
                     for attr in node.attribute:
@@ -2080,7 +2069,8 @@ def transform_non4d_concat_axis(model):
 
 
 def transform_squeeze_unsqueeze_to_reshape(model):
-    """Detects Squeeze-Unsqueeze pairs and converts them to a single Reshape operation.
+    """Detect and convert Squeeze-Unsqueeze pairs to a single Reshape operation.
+    
     This optimization helps reduce unnecessary dimension operations in the graph.
 
     Pattern:
@@ -2167,6 +2157,7 @@ def get_input_shape_from_graph_inputs(graph, input_name):
 
 def transform_non4d_slice_axis(model):
     """For all Slice nodes, if input is 2D or 3D, increment axis by 1.
+    
     Should be applied at the beginning of the transform pipeline.
     """
     cnt_2d = 0
@@ -2227,6 +2218,7 @@ def transform_non4d_slice_axis(model):
 
 def transform_fix_instancenorm_channel_mismatch_PSD6(model):
     """For each InstanceNormalization node, if the input's channel dimension does not match the scale length,
+
     insert a Reshape before the node that rotates the input shape left by one (e.g., [1,2,3,4] -> [2,3,4,1]).
     """
     import numpy as np
@@ -2275,7 +2267,7 @@ def transform_fix_instancenorm_channel_mismatch_PSD6(model):
                 scale_len = scale_shape[0]
                 if scale_len != C:
                     # Need to insert Reshape
-                    new_shape = input_shape + [1]  # rotate left
+                    new_shape = [*input_shape, 1]  # rotate left
                     reshape_shape_name = node.name + "_rotateleft_shape"
                     reshape_shape_init = numpy_helper.from_array(
                         np.array(new_shape, dtype=np.int64), reshape_shape_name
@@ -2309,6 +2301,7 @@ def add_value_info(graph, tensor_name, dtype=TensorProto.FLOAT, shape=None):
 
 def transform_decompose_lstm(model):
     """Decompose ONNX LSTM nodes into a Loop with basic ONNX ops (MatMul, Add, Sigmoid, Tanh, Mul, etc.)
+
     Only supports single-layer, unidirectional LSTM for clarity.
     """
     import numpy as np
