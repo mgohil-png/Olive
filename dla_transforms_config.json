@@ -39,12 +39,13 @@
           {"surgeon": "FixInstanceNormChannelMismatchPSD6"},
           {"surgeon": "TopK"}
 
-        ]
+        ],
+        "external_data_name": "Model_PSA_v6.3_data.bin"
       }
     }
   },
   "engine": {
-    "output_dir": "C:\\Users\\mgohil\\Olive\\models",
+    "output_dir": "C:\\Users\\mgohil\\Olive\\models\\output_models\\Model_PSA_v6.3_transformed",
     "clean_cache": true
   }
 } 
