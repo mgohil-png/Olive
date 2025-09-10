@@ -204,7 +204,7 @@ def transform_matmul_to_transpose_conv_transpose(model):
                     inputs=[node.input[1]],
                     outputs=[f"{matmul_node_name}_transpose_before_output1_{cnt}"],
                     name=f"{matmul_node_name}_transpose_before1_{cnt}",
-                    perm=[0,3,2,1]
+                    perm=[3,2,0,1]
                 )
                 nodes_to_add.append(transpose_before_node_1)
                 conv_input1 = f"{matmul_node_name}_transpose_before_output1_{cnt}"
