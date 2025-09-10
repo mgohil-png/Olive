@@ -142,7 +142,11 @@ def transform_matmul_to_transpose_conv_transpose(model):
                 for init in model.graph.initializer:
                     if init.name == conv_node.input[1]:
                         shape = list(init.dims)
-                        if len(shape) == 2 or (len(shape) == 3 and shape[0] == 1) or (len(shape) == 4 and shape[1] == 1):
+                        if (
+                            len(shape) == 2
+                            or (len(shape) == 3 and shape[0] == 1)
+                            or (len(shape) == 4 and shape[1] == 1)
+                        ):
                             bool_value = True
                 if bool_value:
                     return bool_value
@@ -647,8 +651,7 @@ def transform_remove_qdq(model, keep_clip_after_inputs=False):
                     num_connected_qdq_node_pair += 1
                     if num_connected_qdq_node_pair > 5:
                         logger.info(
-                            "Number of connected QDQ node pair is %d which is not normal.",
-                            num_connected_qdq_node_pair
+                            "Number of connected QDQ node pair is %d which is not normal.", num_connected_qdq_node_pair
                         )
                         sys.exit(1)
 
@@ -750,9 +753,7 @@ def transform_non4d_model_inputs(model):
                             if existing_unsqueeze_axes.tolist()[0] == -1:
                                 unsqueeze_arr = np.array([-1, 0], dtype=np.int64)
                             else:
-                                unsqueeze_arr = np.array(
-                                    [existing_unsqueeze_axes.tolist()[0] + 1, 0], dtype=np.int64
-                                )
+                                unsqueeze_arr = np.array([existing_unsqueeze_axes.tolist()[0] + 1, 0], dtype=np.int64)
                             new_unsqueeze_axes_name = node.name + "unsqueeze_axes_transformed"
                             unsqueeze_axes = numpy_helper.from_array(unsqueeze_arr, new_unsqueeze_axes_name)
                             graph.initializer.append(unsqueeze_axes)
@@ -1861,7 +1862,7 @@ def transform_reducemax(model):
 
 def transform_argmax(model):
     """For all ArgMax nodes, if input is 2D, increment axis by 2; if input is 3D, increment axis by 1.
-    
+
     Also set keepdims=1.
     If keepdims=0, add a Reshape to shift the dimension to the beginning.
     """
@@ -2070,7 +2071,7 @@ def transform_non4d_concat_axis(model):
 
 def transform_squeeze_unsqueeze_to_reshape(model):
     """Detect and convert Squeeze-Unsqueeze pairs to a single Reshape operation.
-    
+
     This optimization helps reduce unnecessary dimension operations in the graph.
 
     Pattern:
@@ -2157,7 +2158,7 @@ def get_input_shape_from_graph_inputs(graph, input_name):
 
 def transform_non4d_slice_axis(model):
     """For all Slice nodes, if input is 2D or 3D, increment axis by 1.
-    
+
     Should be applied at the beginning of the transform pipeline.
     """
     cnt_2d = 0
