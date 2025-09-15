@@ -109,7 +109,7 @@ def transform_matmul_to_transpose_conv_transpose(model):
     initializer_dim_map = {init.name: len(init.dims) for init in graph.initializer}
     nodes_to_remove = []
     for node in graph.node:
-        if node.op_type == "MatMul" or node.op_type == "Gemm":
+        if node.op_type in ("MatMul", "Gemm"):
             need_transform = False
 
             for input_ in node.input:
@@ -452,11 +452,12 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
             # - input is 2D and output is 4D
             # - input is 3D and output is 4D
             # - input is 2D and output is 3D (with extra 1 at front)
-            if (
-                (len(input_shape) == 2 and len(out_shape) == 4)
-                or (len(input_shape) == 3 and len(out_shape) == 4)
-                or (len(input_shape) == 2 and len(out_shape) == 3)
-            ):
+            valid_transforms = [
+                (len(input_shape) == 2 and len(out_shape) == 4),
+                (len(input_shape) == 3 and len(out_shape) == 4),
+                (len(input_shape) == 2 and len(out_shape) == 3),
+            ]
+            if any(valid_transforms):
                 # Create shape initializer for Reshape
                 reshape_shape_name = node.name + "_reshape_shape"
                 reshape_shape = numpy_helper.from_array(np.array(out_shape, dtype=np.int64), reshape_shape_name)
@@ -718,12 +719,8 @@ def transform_remove_deqlin(model):
     logger.info("Removed %d DequantizeLinear nodes", cnt)
 
 
-"""
-Add Unsqueeze node to model inputs if input is 2D or 3D. Special case is if there's already an Unsqueeze node
-"""
-
-
 def transform_non4d_model_inputs(model):
+    """Add Unsqueeze node to model inputs if input is 2D or 3D. Special case is if there's already an Unsqueeze node."""
     cnt = 0
     graph = model.graph
     unsqueeze_to_add = []
@@ -731,7 +728,7 @@ def transform_non4d_model_inputs(model):
 
     for graph_input in graph.input:
         dims = len(graph_input.type.tensor_type.shape.dim)
-        if dims == 2 or dims == 3:
+        if dims in (2, 3):
             for node in graph.node:
                 if len(node.input) > 0 and node.input[0] == graph_input.name:
                     if node.op_type == "Unsqueeze":
@@ -862,7 +859,7 @@ def transform_non4d_model_outputs(model):
                     ) != get_shape_from_graph(graph, graph_output.name):
                         node.input[i] = unsqueeze_input_name
             continue
-        if output_dim < 4 and output_dim > 1:
+        if 1 < output_dim < 4:
             for node in graph.node:
                 if node.op_type == "Squeeze" and (
                     node.output[0] == graph_output.name or is_squeeze_clip_output_pattern(node, model)
@@ -939,9 +936,7 @@ def transform_standalone_reducesum_reducemean(
     reshape_counter = 0  # Add counter for unique reshape shape names
     for node in graph.node:
         # A single ReduceSum, not transformed with reshape_reducesum_to_slice_reducesum_concat
-        if (
-            node.op_type == "ReduceSum" or node.op_type == "ReduceMean" or node.op_type == "ReduceMax"
-        ) and "transformed" not in node.name:
+        if node.op_type in ("ReduceSum", "ReduceMean", "ReduceMax") and "transformed" not in node.name:
             # logger.info(node.name)
             # logger.info(node)
             # set keepdims = 1
@@ -1152,6 +1147,7 @@ def transform_gatherelements(model):
             indices_initializer_name = node.input[1]
             existing_indices = None
             indices_array = None
+            initializer_to_remove = None
             for initializer in model.graph.initializer:
                 if initializer.name == indices_initializer_name:
                     existing_indices = numpy_helper.to_array(initializer)
@@ -1162,7 +1158,9 @@ def transform_gatherelements(model):
                     indices_array = np.array([existing_indices.item()], dtype=existing_indices.dtype)
                 elif existing_indices.ndim == 3:
                     # Handle 3D indices, reshape to 4D by adding dimension at front
-                    logger.info("Reshaping 3D indices %s from %s to 4D", initializer.name, existing_indices.shape)
+                    logger.info(
+                        "Reshaping 3D indices %s from %s to 4D", indices_initializer_name, existing_indices.shape
+                    )
                     indices_array = np.expand_dims(existing_indices, axis=0)  # Eg.[12,64,64]->[1,12,64,64]
                 else:
                     indices_array = existing_indices
@@ -1352,14 +1350,12 @@ def transform_non4d_tile(model):
     logger.info("Updated %d non4D Tile nodes", cnt)
 
 
-"""
-perm attribute of Transpose
-- 2D: [T0, T1] -> [1, 1, T0 + 2, T1 + 2]
-- 3D: [T0, T1, T2] -> [1, T0 + 1. T1 + 1, T2 + 1]
-"""
-
-
 def transform_non4d_transpose(model):
+    """Transform perm attribute of Transpose.
+
+    - 2D: [T0, T1] -> [1, 1, T0 + 2, T1 + 2]
+    - 3D: [T0, T1, T2] -> [1, T0 + 1. T1 + 1, T2 + 1]
+    """
     cnt = 0
     for node in model.graph.node:
         if node.op_type == "Transpose":
@@ -1378,30 +1374,12 @@ def transform_non4d_transpose(model):
                 elif attr.name == "perm" and len(attr.ints) == 5:
                     old_perm = list(attr.ints)
                     new_perm = [old_perm[0] - 1, old_perm[1] - 1, old_perm[2] - 1, old_perm[3] - 1]
-                    for i in range(len(new_perm)):
-                        if new_perm[i] == -1:
+                    for i, perm_val in enumerate(new_perm):
+                        if perm_val == -1:
                             new_perm[i] = len(old_perm) - 2
                     attr.ints[:] = new_perm
                     cnt += 1
     logger.info("Updated %d non4D Transpose nodes", cnt)
-
-
-# # Transform Slice axes of non4D tensors
-# def transform_non4d_slice(model):
-#     cnt = 0
-#     for node in model.graph.node:
-#         # Skip transformed nodes
-#         if node.op_type == 'Slice' and not 'transformed_' in node.input[3]:
-#             new_init_to_add = None
-#             for init in model.graph.initializer:
-#                 if init.name == node.input[3] and init.dims[0] == 1:
-#                     new_init_name = node.name + '_axes'
-#                     new_init_to_add = numpy_helper.from_array(np.array([-1], dtype=np.int64), name=new_init_name)
-#                     node.input[3] = new_init_name
-#                     cnt += 1
-#             if new_init_to_add is not None:
-#                 model.graph.initializer.append(new_init_to_add)
-#     logger.info(f"Updated {cnt} non4D Slice axes")
 
 
 # Transform LpNormalization axes of non4D tensors
@@ -1500,29 +1478,29 @@ def transform_remove_unused_initializers(model):
 # Onnxscript transform
 ###
 
-"""
-FROM
-    x, shape
-    |
-Reshape axes
-    |   /
-ReduceSum
-    |
-reducesum_output
-TO
-      x
-   /        \
-Slice      Slice
-  |           |
-ReduceSum   ReduceSum
-    \\       /
-    Concat
-      |
-reducesum_output
-"""
-
 
 def reshape_reducesum_pattern(op, x, shape, axes):
+    r"""Following is the transformation.
+
+    FROM
+        x, shape
+        |
+    Reshape axes
+        |   /
+    ReduceSum
+        |
+    reducesum_output
+    TO
+        x
+    /        \\
+    Slice      Slice
+    |           |
+    ReduceSum   ReduceSum
+        \\       /
+        Concat
+        |
+    reducesum_output
+    """
     reshape_output = op.Reshape(x, shape)
     return op.ReduceSum(reshape_output, axes)
 
@@ -1548,33 +1526,32 @@ def transform_reshape_reducesum(model):
     )
 
 
-"""
-FROM
-    (x)
-    |
-  Reshape
-    |
-   Clip
-    |
-ReduceSum
-    |
-(reducesum_output)
-TO
-      (x)
-   /        \
-Slice      Slice
-  |           |
-Clip        Clip
-  |           |
-ReduceSum   ReduceSum
-    \\       /
-    Concat
-      |
-(reducesum_output)
-"""
-
-
 def transform_reshape_clip_reducesum(model):
+    r"""Following is the transformation.
+
+    FROM
+        (x)
+        |
+    Reshape
+        |
+    Clip
+        |
+    ReduceSum
+        |
+    (reducesum_output)
+    TO
+        (x)
+    /        \\
+    Slice      Slice
+    |           |
+    Clip        Clip
+    |           |
+    ReduceSum   ReduceSum
+        \\       /
+        Concat
+        |
+    (reducesum_output)
+    """
     graph = model.graph
     nodes_to_remove = []
     nodes_to_add = []
@@ -1673,39 +1650,36 @@ def transform_reshape_clip_reducesum(model):
     return model
 
 
-"""
-FROM
-    (x)
-    |
-  Reshape
-    |
-   QuantizeLinear
-    |
-  DequantizeLinear
-    |
-ReduceSum
-    |
-(reducesum_output)
-TO
-      (x)
-   /        \
-Slice      Slice
-  |           |
-QuantizeLinear QuantizeLinear
-  |           |
-DequantizeLinear DequantizeLinear
-  |           |
-ReduceSum   ReduceSum
-    \\       /
-    Concat
-      |
-(reducesum_output)
-"""
-
-
 def transform_reshape_qdq_reducesum_generic(model):
-    from onnx import TensorProto, helper
+    r"""Following is the transformation.
 
+    FROM
+        (x)
+        |
+    Reshape
+        |
+    QuantizeLinear
+        |
+    DequantizeLinear
+        |
+    ReduceSum
+        |
+    (reducesum_output)
+    TO
+        (x)
+    /        \\
+    Slice      Slice
+    |           |
+    QuantizeLinear QuantizeLinear
+    |           |
+    DequantizeLinear DequantizeLinear
+    |           |
+    ReduceSum   ReduceSum
+        \\       /
+        Concat
+        |
+    (reducesum_output)
+    """
     graph = model.graph
     nodes_to_remove = []
     nodes_to_add = []
@@ -1804,26 +1778,25 @@ def transform_reshape_qdq_reducesum_generic(model):
     return model
 
 
-"""
-FROM
-data   axes   keepdims
-    |   /     /
-ReduceMax
-    |
-reducemax_output
-TO
-data   axes   keepdims
-    |   /     /
-ReduceMax
-    |    reshape_shape
-    |   /
-Reshape
-    |
-reducemax_output
-"""
-
-
 def reducemax_pattern(op, data, axes, keepdims):
+    """Following is the transformation.
+
+    FROM
+    data   axes   keepdims
+        |   /     /
+    ReduceMax
+        |
+    reducemax_output
+    TO
+    data   axes   keepdims
+        |   /     /
+    ReduceMax
+        |    reshape_shape
+        |   /
+    Reshape
+        |
+    reducemax_output
+    """
     return op.Reducemax(data, axes, keepdims)
 
 
