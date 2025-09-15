@@ -1429,9 +1429,9 @@ class ReduceMaxMin(ProtoSurgeon):
 
 class ReduceMinKeepdimsGT(ProtoSurgeon):
     def __call__(self, model: ModelProto):
-        from olive.passes.onnx.dla_transforms import transform_reducemin_keepdims_GT
+        from olive.passes.onnx.dla_transforms import transform_reducemin_keepdims_gt
 
-        transform_reducemin_keepdims_GT(model)
+        transform_reducemin_keepdims_gt(model)
         return model
 
 
@@ -1509,9 +1509,9 @@ class Non4DSliceAxis(ProtoSurgeon):
 
 class FixInstanceNormChannelMismatchPSD6(ProtoSurgeon):
     def __call__(self, model: ModelProto):
-        from olive.passes.onnx.dla_transforms import transform_fix_instancenorm_channel_mismatch_PSD6
+        from olive.passes.onnx.dla_transforms import transform_fix_instancenorm_channel_mismatch_psd6
 
-        transform_fix_instancenorm_channel_mismatch_PSD6(model)
+        transform_fix_instancenorm_channel_mismatch_psd6(model)
         return model
 
 
