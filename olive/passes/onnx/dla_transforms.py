@@ -69,7 +69,7 @@ def get_initializer_by_name(model, init_name):
 def calculate_clip_range(node, model):
     x_scale = get_initializer_by_name(model, node.input[1])
     x_zero_point = get_initializer_by_name(model, node.input[2])
-    assert x_scale, f"{node.name} should have x_scale value"
+    assert x_scale is not None, f"{node.name} should have x_scale value"
     int_max = np.int32(65535 if x_zero_point.dtype == np.uint16 else 255 if x_zero_point.dtype == np.uint8 else 127)
     int_min = np.int32(0 if x_zero_point.dtype == np.uint16 else 0 if x_zero_point.dtype == np.uint8 else -128)
     if x_zero_point is None:
@@ -517,7 +517,7 @@ def transform_qdq_to_clip(model):
             deqlin_name_node_map[node.input[0]] = node
             x_scale = get_initializer_by_name(model, node.input[1])
             x_zero_point = get_initializer_by_name(model, node.input[2])
-            assert x_scale, f"{node.name} should have x_scale value"
+            assert x_scale is not None, f"{node.name} should have x_scale value"
             int_max = np.int32(
                 65535 if x_zero_point.dtype == np.uint16 else 255 if x_zero_point.dtype == np.uint8 else 127
             )
