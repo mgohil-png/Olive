@@ -312,9 +312,6 @@ def transform_matmul_to_transpose_conv_transpose(model):
 
 
 def transform_remove_intermediary_squeeze_and_unsqueeze(model):
-    import numpy as np
-    from onnx import helper, numpy_helper
-
     graph = model.graph
     input_names = {input_.name for input_ in graph.input}
     output_names = {output.name for output in graph.output}
@@ -352,9 +349,7 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
     for node in graph.node:
         # --- Remove intermediary Squeeze nodes ---
         if len(node.input) > 0:
-            input_shape = get_shape(
-                node.input[0]
-            )  #### without this if condition, it will give error for constant op (GT)
+            input_shape = get_shape(node.input[0])  #### without this if condition, it will give error for constant op
 
         # --- Handle special case: Squeeze with axis 2 and 5D input ---
         if (
@@ -437,9 +432,7 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
                     break
             if axes is None:
                 for n in graph.node:
-                    if (
-                        n.op_type == "Constant" and n.output[0] == node.input[1]
-                    ):  #### GT has value stored in constant op
+                    if n.op_type == "Constant" and n.output[0] == node.input[1]:
                         for attr in n.attribute:
                             if attr.name == "value":
                                 axes = numpy_helper.to_array(attr.t)
@@ -837,11 +830,10 @@ def transform_non4d_model_outputs(model):
             can_add_squeeze = False
             for node in graph.node:
                 for node_output_name in node.output:
-                    if node_output_name == graph_output.name:
-                        if get_shape_from_graph(graph, node_output_name) != get_shape_from_graph(
-                            graph, graph_output.name
-                        ):
-                            can_add_squeeze = True
+                    if node_output_name == graph_output.name and get_shape_from_graph(
+                        graph, node_output_name
+                    ) != get_shape_from_graph(graph, graph_output.name):
+                        can_add_squeeze = True
             if can_add_squeeze:
                 unsqueeze_input_name = graph_output.name + "_Squeeze_input"
                 unsqueeze_axes_name = graph_output.name + "_Squeeze_axes"
@@ -859,18 +851,16 @@ def transform_non4d_model_outputs(model):
             # Change output of previous node to unsqueeze_input_name
             for node in graph.node:
                 for i, node_output_name in enumerate(node.output):
-                    if node_output_name == graph_output.name:
-                        if get_shape_from_graph(graph, node_output_name) != get_shape_from_graph(
-                            graph, graph_output.name
-                        ):
-                            node.output[i] = unsqueeze_input_name
+                    if node_output_name == graph_output.name and get_shape_from_graph(
+                        graph, node_output_name
+                    ) != get_shape_from_graph(graph, graph_output.name):
+                        node.output[i] = unsqueeze_input_name
                 # Handle intermediate nodes that have graph_output as input
                 for i, node_input_name in enumerate(node.input):
-                    if node_input_name == graph_output.name:
-                        if get_shape_from_graph(graph, node_input_name) != get_shape_from_graph(
-                            graph, graph_output.name
-                        ):
-                            node.input[i] = unsqueeze_input_name
+                    if node_input_name == graph_output.name and get_shape_from_graph(
+                        graph, node_input_name
+                    ) != get_shape_from_graph(graph, graph_output.name):
+                        node.input[i] = unsqueeze_input_name
             continue
         if output_dim < 4 and output_dim > 1:
             for node in graph.node:
@@ -933,7 +923,7 @@ def get_shape_from_graph(graph, name):
     return None
 
 
-def transform_reducemin_keepdims_GT(model):
+def transform_reducemin_keepdims_gt(model):
     graph = model.graph
     for node in graph.node:
         if node.op_type == "ReduceMin" and "transformed" not in node.name:
@@ -944,7 +934,7 @@ def transform_reducemin_keepdims_GT(model):
 
 def transform_standalone_reducesum_reducemean(
     model,
-):  #### To make it suitable for running F2, i have added reducemean and to make it suitable for GT, i have added reducemin as the core tranformation is exactly same
+):
     graph = model.graph
     reshape_counter = 0  # Add counter for unique reshape shape names
     for node in graph.node:
@@ -1335,15 +1325,14 @@ def transform_non4d_expand(model):
     for node in model.graph.node:
         if node.op_type == "Expand":
             for init in model.graph.initializer:
-                if init.name == node.input[1]:
-                    if init.dims[0] == 3:
-                        old_shape = numpy_helper.to_array(init)
-                        init.dims[0] = 4
-                        new_shape = np.insert(old_shape, 0, 1).astype(np.int64)
-                        new_init = numpy_helper.from_array(new_shape, name=init.name)
-                        model.graph.initializer.remove(init)
-                        model.graph.initializer.append(new_init)
-                        cnt += 1
+                if init.name == node.input[1] and init.dims[0] == 3:
+                    old_shape = numpy_helper.to_array(init)
+                    init.dims[0] = 4
+                    new_shape = np.insert(old_shape, 0, 1).astype(np.int64)
+                    new_init = numpy_helper.from_array(new_shape, name=init.name)
+                    model.graph.initializer.remove(init)
+                    model.graph.initializer.append(new_init)
+                    cnt += 1
     logger.info("Updated %d non4D Expand nodes", cnt)
 
 
@@ -1352,15 +1341,14 @@ def transform_non4d_tile(model):
     for node in model.graph.node:
         if node.op_type == "Tile":
             for init in model.graph.initializer:
-                if init.name == node.input[1]:
-                    if init.dims[0] == 3:
-                        old_shape = numpy_helper.to_array(init)
-                        init.dims[0] = 4
-                        new_shape = np.insert(old_shape, 0, 1).astype(np.int64)
-                        new_init = numpy_helper.from_array(new_shape, name=init.name)
-                        model.graph.initializer.remove(init)
-                        model.graph.initializer.append(new_init)
-                        cnt += 1
+                if init.name == node.input[1] and init.dims[0] == 3:
+                    old_shape = numpy_helper.to_array(init)
+                    init.dims[0] = 4
+                    new_shape = np.insert(old_shape, 0, 1).astype(np.int64)
+                    new_init = numpy_helper.from_array(new_shape, name=init.name)
+                    model.graph.initializer.remove(init)
+                    model.graph.initializer.append(new_init)
+                    cnt += 1
     logger.info("Updated %d non4D Tile nodes", cnt)
 
 
@@ -1536,8 +1524,7 @@ reducesum_output
 
 def reshape_reducesum_pattern(op, x, shape, axes):
     reshape_output = op.Reshape(x, shape)
-    reducesum_output = op.ReduceSum(reshape_output, axes)
-    return reducesum_output
+    return op.ReduceSum(reshape_output, axes)
 
 
 def slice_reducesum_concat(op, x, shape, axes):
@@ -1555,11 +1542,10 @@ def slice_reducesum_concat(op, x, shape, axes):
 
 def transform_reshape_reducesum(model):
     reshape_reducesum_rule = pattern.RewriteRule(reshape_reducesum_pattern, slice_reducesum_concat, verbose=10)
-    model = onnxscript.rewriter.rewrite(
+    return onnxscript.rewriter.rewrite(
         model,
         pattern_rewrite_rules=[reshape_reducesum_rule],
     )
-    return model
 
 
 """
@@ -1853,11 +1839,10 @@ def reducemax_reshape(op, data, axes, keepdims):
 
 def transform_reducemax(model):
     reducemax_rule = pattern.RewriteRule(reducemax_pattern, reducemax_reshape, verbose=10)
-    model = onnxscript.rewriter.rewrite(
+    return onnxscript.rewriter.rewrite(
         model,
         pattern_rewrite_rules=[reducemax_rule],
     )
-    return model
 
 
 def transform_argmax(model):
@@ -1867,24 +1852,6 @@ def transform_argmax(model):
     If keepdims=0, add a Reshape to shift the dimension to the beginning.
     """
     graph = model.graph
-
-    def get_shape_from_graph(graph, name):
-        # Check value_info
-        for value_info in graph.value_info:
-            if value_info.name == name:
-                tensor_type = value_info.type.tensor_type
-                return [d.dim_value if d.HasField("dim_value") else 0 for d in tensor_type.shape.dim]
-        # Check graph inputs
-        for graph_input in graph.input:
-            if graph_input.name == name:
-                tensor_type = graph_input.type.tensor_type
-                return [d.dim_value if d.HasField("dim_value") else 0 for d in tensor_type.shape.dim]
-        # Check initializers
-        for init in graph.initializer:
-            if init.name == name:
-                return list(init.dims)
-        return None
-
     cnt_2d = 0
     cnt_3d = 0
     for node in graph.node:
@@ -2185,7 +2152,7 @@ def transform_non4d_slice_axis(model):
                     if init.name == axes_input:
                         axes = numpy_helper.to_array(init)
 
-                        if axes[0] != -1 and (dims == 2 or dims == 3):
+                        if axes[0] != -1 and dims in (2, 3):
                             if dims == 2:
                                 new_axes = np.array([axes[0] + 2], dtype=axes.dtype)
                             elif dims == 3:
@@ -2194,7 +2161,7 @@ def transform_non4d_slice_axis(model):
                                 new_axes = np.array([-1], dtype=axes.dtype)
                             # If this initializer is used by more than one input, clone it
 
-                            uses = sum([axes_input == n for n in node.input])
+                            uses = sum(axes_input == n for n in node.input)
                             if uses > 1 or any(axes_input in n.input[1:] for n in graph.node if n != node):
                                 # Create a new initializer for axes
 
@@ -2217,14 +2184,11 @@ def transform_non4d_slice_axis(model):
     logger.info("Updated %d Slice nodes with 2D inputs (axis+1), %d with 3D inputs (axis+1)", cnt_2d, cnt_3d)
 
 
-def transform_fix_instancenorm_channel_mismatch_PSD6(model):
-    """For each InstanceNormalization node, if the input's channel dimension does not match the scale length,
+def transform_fix_instancenorm_channel_mismatch_psd6(model):
+    """For each InstanceNormalization node, if the input's channel dimension does not match the scale length.
 
-    insert a Reshape before the node that rotates the input shape left by one (e.g., [1,2,3,4] -> [2,3,4,1]).
+    Insert a Reshape before the node that rotates the input shape left by one (e.g., [1,2,3,4] -> [2,3,4,1]).
     """
-    import numpy as np
-    from onnx import helper, numpy_helper
-
     graph = model.graph
     tensor_name_dim_map = get_tensor_shape_map(graph.value_info)
     initializer_dim_map = {init.name: list(init.dims) for init in graph.initializer}
@@ -2264,9 +2228,9 @@ def transform_fix_instancenorm_channel_mismatch_PSD6(model):
             if scale_shape is None or len(scale_shape) != 1:
                 continue  # Can't process if scale shape unknown or not 1D
             if len(input_shape) == 3:
-                C = input_shape[0]
+                c = input_shape[0]
                 scale_len = scale_shape[0]
-                if scale_len != C:
+                if scale_len != c:
                     # Need to insert Reshape
                     new_shape = [*input_shape, 1]  # rotate left
                     reshape_shape_name = node.name + "_rotateleft_shape"
@@ -2301,13 +2265,10 @@ def add_value_info(graph, tensor_name, dtype=TensorProto.FLOAT, shape=None):
 
 
 def transform_decompose_lstm(model):
-    """Decompose ONNX LSTM nodes into a Loop with basic ONNX ops (MatMul, Add, Sigmoid, Tanh, Mul, etc.)
+    """Decompose ONNX LSTM nodes into a Loop with basic ONNX ops (MatMul, Add, Sigmoid, Tanh, Mul, etc.).
 
     Only supports single-layer, unidirectional LSTM for clarity.
     """
-    import numpy as np
-    from onnx import TensorProto, helper, numpy_helper
-
     graph = model.graph
     nodes_to_remove = []
     nodes_to_add = []
@@ -2315,31 +2276,31 @@ def transform_decompose_lstm(model):
 
     for node in list(graph.node):
         if node.op_type == "LSTM":
-            X, W, R, B = node.input[:4]
+            x_input, w_input, r_input, b_input = node.input[:4]
             initial_h = node.input[5]
             initial_c = node.input[6]
 
             # Get hidden_size and input_size from W shape
-            W_arr = None
+            w_arr = None
             hidden_size = None
             for init in graph.initializer:
-                if init.name == W:
-                    W_arr = numpy_helper.to_array(init)
-                    hidden_size = W_arr.shape[1] // 4
+                if init.name == w_input:
+                    w_arr = numpy_helper.to_array(init)
+                    hidden_size = w_arr.shape[1] // 4
                     break
 
             # Robustly get seq_length and batch_size from X shape
             seq_length = None
             batch_size = None
             for value_info in list(graph.input) + list(graph.value_info) + list(graph.output):
-                if value_info.name == X:
+                if value_info.name == x_input:
                     dims = value_info.type.tensor_type.shape.dim
                     if len(dims) >= 2:
                         seq_length = dims[0].dim_value
                         batch_size = dims[1].dim_value
                     break
             if seq_length is None or batch_size is None:
-                raise RuntimeError(f"Could not determine seq_length or batch_size for input {X}")
+                raise RuntimeError(f"Could not determine seq_length or batch_size for input {x_input}")
 
             # Add initializer for value 1
             one_initializer_name = f"one_val_{lstm_counter}"
@@ -2368,7 +2329,7 @@ def transform_decompose_lstm(model):
             x_t_name = f"x_t_{lstm_counter}"
             x_t_slice = helper.make_node(
                 "Slice",
-                [X, zero_initializer_name, one_initializer_name, ax_name, ste_name],
+                [x_input, zero_initializer_name, one_initializer_name, ax_name, ste_name],
                 [x_t_name],
                 name=f"slice_x_t_{lstm_counter}",
             )
@@ -2397,35 +2358,35 @@ def transform_decompose_lstm(model):
                 ),
                 name=f"const_split_8h_{lstm_counter}",
             )
-            split_W = helper.make_node(
+            split_w = helper.make_node(
                 "Split",
-                [W, split_4h_name],
+                [w_input, split_4h_name],
                 [f"W_i_{lstm_counter}", f"W_o_{lstm_counter}", f"W_f_{lstm_counter}", f"W_c_{lstm_counter}"],
                 axis=2,
                 name=f"split_W_{lstm_counter}",
             )
-            split_R = helper.make_node(
+            split_r = helper.make_node(
                 "Split",
-                [R, split_4h_name],
+                [r_input, split_4h_name],
                 [f"R_i_{lstm_counter}", f"R_o_{lstm_counter}", f"R_f_{lstm_counter}", f"R_c_{lstm_counter}"],
                 axis=2,
                 name=f"split_R_{lstm_counter}",
             )
-            split_B = helper.make_node(
+            split_b = helper.make_node(
                 "Split",
-                [B, split_8h_name],
+                [b_input, split_8h_name],
                 [f"B_W_{lstm_counter}", f"B_R_{lstm_counter}"],
                 axis=3,
                 name=f"split_B_{lstm_counter}",
             )
-            split_B_W = helper.make_node(
+            split_b_w = helper.make_node(
                 "Split",
                 [f"B_W_{lstm_counter}", split_4h_name],
                 [f"b_Wi_{lstm_counter}", f"b_Wo_{lstm_counter}", f"b_Wf_{lstm_counter}", f"b_Wc_{lstm_counter}"],
                 axis=3,
                 name=f"split_B_W_{lstm_counter}",
             )
-            split_B_R = helper.make_node(
+            split_b_r = helper.make_node(
                 "Split",
                 [f"B_R_{lstm_counter}", split_4h_name],
                 [f"b_Ri_{lstm_counter}", f"b_Ro_{lstm_counter}", f"b_Rf_{lstm_counter}", f"b_Rc_{lstm_counter}"],
@@ -2434,56 +2395,56 @@ def transform_decompose_lstm(model):
             )
 
             # Add Transpose nodes for weights before MatMul
-            transpose_Wi = helper.make_node(
+            transpose_wi = helper.make_node(
                 "Transpose",
                 [f"W_i_{lstm_counter}"],
                 [f"W_i_T_{lstm_counter}"],
                 name=f"transpose_Wi_{lstm_counter}",
                 perm=[0, 2, 1],
             )
-            transpose_Wf = helper.make_node(
+            transpose_wf = helper.make_node(
                 "Transpose",
                 [f"W_f_{lstm_counter}"],
                 [f"W_f_T_{lstm_counter}"],
                 name=f"transpose_Wf_{lstm_counter}",
                 perm=[0, 2, 1],
             )
-            transpose_Wo = helper.make_node(
+            transpose_wo = helper.make_node(
                 "Transpose",
                 [f"W_o_{lstm_counter}"],
                 [f"W_o_T_{lstm_counter}"],
                 name=f"transpose_Wo_{lstm_counter}",
                 perm=[0, 2, 1],
             )
-            transpose_Wc = helper.make_node(
+            transpose_wc = helper.make_node(
                 "Transpose",
                 [f"W_c_{lstm_counter}"],
                 [f"W_c_T_{lstm_counter}"],
                 name=f"transpose_Wc_{lstm_counter}",
                 perm=[0, 2, 1],
             )
-            transpose_Ri = helper.make_node(
+            transpose_ri = helper.make_node(
                 "Transpose",
                 [f"R_i_{lstm_counter}"],
                 [f"R_i_T_{lstm_counter}"],
                 name=f"transpose_Ri_{lstm_counter}",
                 perm=[0, 2, 1],
             )
-            transpose_Rf = helper.make_node(
+            transpose_rf = helper.make_node(
                 "Transpose",
                 [f"R_f_{lstm_counter}"],
                 [f"R_f_T_{lstm_counter}"],
                 name=f"transpose_Rf_{lstm_counter}",
                 perm=[0, 2, 1],
             )
-            transpose_Ro = helper.make_node(
+            transpose_ro = helper.make_node(
                 "Transpose",
                 [f"R_o_{lstm_counter}"],
                 [f"R_o_T_{lstm_counter}"],
                 name=f"transpose_Ro_{lstm_counter}",
                 perm=[0, 2, 1],
             )
-            transpose_Rc = helper.make_node(
+            transpose_rc = helper.make_node(
                 "Transpose",
                 [f"R_c_{lstm_counter}"],
                 [f"R_c_T_{lstm_counter}"],
@@ -2493,13 +2454,13 @@ def transform_decompose_lstm(model):
 
             # Gates: i, f, o, g
             # Input gate
-            xW_i = helper.make_node(
+            xw_i = helper.make_node(
                 "MatMul",
                 [x_t_name, f"W_i_T_{lstm_counter}"],
                 [f"xW_i_{lstm_counter}"],
                 name=f"matmul_xW_i_{lstm_counter}",
             )
-            hR_i = helper.make_node(
+            hr_i = helper.make_node(
                 "MatMul",
                 [initial_h, f"R_i_T_{lstm_counter}"],
                 [f"hR_i_{lstm_counter}"],
@@ -2527,13 +2488,13 @@ def transform_decompose_lstm(model):
                 "Sigmoid", [f"i_t_pre2_{lstm_counter}"], [f"i_t_{lstm_counter}"], name=f"sigmoid_i_t_{lstm_counter}"
             )
             # Forget gate
-            xW_f = helper.make_node(
+            xw_f = helper.make_node(
                 "MatMul",
                 [x_t_name, f"W_f_T_{lstm_counter}"],
                 [f"xW_f_{lstm_counter}"],
                 name=f"matmul_xW_f_{lstm_counter}",
             )
-            hR_f = helper.make_node(
+            hr_f = helper.make_node(
                 "MatMul",
                 [initial_h, f"R_f_T_{lstm_counter}"],
                 [f"hR_f_{lstm_counter}"],
@@ -2561,13 +2522,13 @@ def transform_decompose_lstm(model):
                 "Sigmoid", [f"f_t_pre2_{lstm_counter}"], [f"f_t_{lstm_counter}"], name=f"sigmoid_f_t_{lstm_counter}"
             )
             # Output gate
-            xW_o = helper.make_node(
+            xw_o = helper.make_node(
                 "MatMul",
                 [x_t_name, f"W_o_T_{lstm_counter}"],
                 [f"xW_o_{lstm_counter}"],
                 name=f"matmul_xW_o_{lstm_counter}",
             )
-            hR_o = helper.make_node(
+            hr_o = helper.make_node(
                 "MatMul",
                 [initial_h, f"R_o_T_{lstm_counter}"],
                 [f"hR_o_{lstm_counter}"],
@@ -2595,13 +2556,13 @@ def transform_decompose_lstm(model):
                 "Sigmoid", [f"o_t_pre2_{lstm_counter}"], [f"o_t_{lstm_counter}"], name=f"sigmoid_o_t_{lstm_counter}"
             )
             # Cell gate
-            xW_c = helper.make_node(
+            xw_c = helper.make_node(
                 "MatMul",
                 [x_t_name, f"W_c_T_{lstm_counter}"],
                 [f"xW_c_{lstm_counter}"],
                 name=f"matmul_xW_c_{lstm_counter}",
             )
-            hR_c = helper.make_node(
+            hr_c = helper.make_node(
                 "MatMul",
                 [initial_h, f"R_c_T_{lstm_counter}"],
                 [f"hR_c_{lstm_counter}"],
@@ -2671,39 +2632,39 @@ def transform_decompose_lstm(model):
                     x_t_slice,
                     split_4h,
                     split_8h,
-                    split_W,
-                    split_R,
-                    split_B,
-                    split_B_W,
-                    split_B_R,
-                    transpose_Wi,
-                    transpose_Wf,
-                    transpose_Wo,
-                    transpose_Wc,
-                    transpose_Ri,
-                    transpose_Rf,
-                    transpose_Ro,
-                    transpose_Rc,
-                    xW_i,
-                    hR_i,
+                    split_w,
+                    split_r,
+                    split_b,
+                    split_b_w,
+                    split_b_r,
+                    transpose_wi,
+                    transpose_wf,
+                    transpose_wo,
+                    transpose_wc,
+                    transpose_ri,
+                    transpose_rf,
+                    transpose_ro,
+                    transpose_rc,
+                    xw_i,
+                    hr_i,
                     b_i,
                     i_t_pre,
                     i_t_pre2,
                     i_t,
-                    xW_f,
-                    hR_f,
+                    xw_f,
+                    hr_f,
                     b_f,
                     f_t_pre,
                     f_t_pre2,
                     f_t,
-                    xW_o,
-                    hR_o,
+                    xw_o,
+                    hr_o,
                     b_o,
                     o_t_pre,
                     o_t_pre2,
                     o_t,
-                    xW_c,
-                    hR_c,
+                    xw_c,
+                    hr_c,
                     b_c,
                     g_t_pre,
                     g_t_pre2,
@@ -2726,8 +2687,6 @@ def transform_decompose_lstm(model):
 
 
 def transform_reshape_clip_reducesum_manual(model):
-    from onnx import TensorProto, helper
-
     graph = model.graph
     nodes_to_remove = []
     nodes_to_add = []
@@ -2827,10 +2786,11 @@ def transform_reshape_clip_reducesum_manual(model):
 
 
 def transform_reshape_clip_transpose_clip_reshape(model):
-    """Find pattern: Reshape -> Clip -> Transpose -> Clip -> Reshape
+    """Find pattern: Reshape -> Clip -> Transpose -> Clip -> Reshape.
+
     Replace with: Slice into 6 tensors along first dim, reshape each to 4x4x115x199,
     transpose to 115x4x199x4, reshape to 1x115x4x796, concat all 6 along first axis
-    to get 6x115x4x796, then reshape to 1x6x460x796
+    to get 6x115x4x796, then reshape to 1x6x460x796.
     """
     graph = model.graph
     nodes_to_remove = []
@@ -2911,7 +2871,7 @@ def transform_reshape_clip_transpose_clip_reshape(model):
                     )
                 )
 
-            graph.initializer.extend([slice_axes] + slice_starts + slice_ends)
+            graph.initializer.extend([slice_axes, *slice_starts, *slice_ends])
 
             # Create reshape shapes
             reshape_4d_shape = helper.make_tensor(
@@ -2991,9 +2951,10 @@ def transform_reshape_clip_transpose_clip_reshape(model):
 
 
 def transform_reshape_transpose_reshape(model):
-    """Find pattern: Reshape -> Transpose -> Reshape
+    """Find pattern: Reshape -> Transpose -> Reshape.
+
     Replace with: Slice into 6 tensors along first dim, reshape each to 4x4x115x199,
-    transpose to 115x4x199x4, reshape to 1x1x460x796, concat all 6 along axis 1
+    transpose to 115x4x199x4, reshape to 1x1x460x796, concat all 6 along axis 1.
     """
     graph = model.graph
     nodes_to_remove = []
@@ -3064,7 +3025,7 @@ def transform_reshape_transpose_reshape(model):
                         name=f"slice_{i}_ends_{counter}", data_type=TensorProto.INT64, dims=[1], vals=[i + 1]
                     )
                 )
-            graph.initializer.extend([slice_axes] + slice_starts + slice_ends)
+            graph.initializer.extend([slice_axes, *slice_starts, *slice_ends])
             # Create reshape shapes
             reshape_4d_shape = helper.make_tensor(
                 name=f"reshape_4d_shape_{counter}", data_type=TensorProto.INT64, dims=[4], vals=[4, 4, 115, 199]
