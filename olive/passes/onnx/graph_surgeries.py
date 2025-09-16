@@ -1387,17 +1387,34 @@ class ReplaceAttentionMaskValue(ProtoSurgeon):
 
 
 class RemoveQDQ(ProtoSurgeon):
+    """Remove QuantizeLinear and DequantizeLinear node pairs from the graph.
+
+    Handles various scenarios including consecutive QDQ pairs and graph input/output connections.
+    Can optionally replace QDQ pairs with Clip nodes or remove them entirely based on configuration.
+    Supports keeping Clip nodes after inputs to limit input range when keep_clip_after_inputs=True.
+    """
+
+    def __init__(self, keep_clip_after_inputs: bool = False):
+        self.keep_clip_after_inputs = keep_clip_after_inputs
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_qdq_to_clip, transform_remove_qdq
 
         if clip_needed:
             transform_qdq_to_clip(model)
         else:
-            transform_remove_qdq(model)
+            transform_remove_qdq(model, self.keep_clip_after_inputs)
         return model
 
 
 class StandaloneReduceSum(ProtoSurgeon):
+    """Transform standalone ReduceSum/ReduceMean/ReduceMax operations for 4D compatibility.
+
+    Sets keepdims=1 and adjusts axes based on input dimensions (2D: +2, 3D: +1).
+    Adds Reshape nodes when keepdims was originally 0 to maintain proper output dimensions.
+    Ensures reduction operations work correctly with 4D tensor transformations.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_standalone_reducesum_reducemean
 
@@ -1406,6 +1423,14 @@ class StandaloneReduceSum(ProtoSurgeon):
 
 
 class ReshapeQDQReduceSumGeneric(ProtoSurgeon):
+    """Transform Reshape-QuantizeLinear-DequantizeLinear-ReduceSum pattern to parallel paths.
+
+    Replaces the 4-node pattern with slice-based operations for DLA optimization:
+    - Splits input into parallel Slice operations along axis 3
+    - Each path: Slice -> QuantizeLinear -> DequantizeLinear -> ReduceSum
+    - Concatenates results to maintain numerical equivalence while improving parallelization
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_reshape_qdq_reducesum_generic
 
@@ -1414,6 +1439,11 @@ class ReshapeQDQReduceSumGeneric(ProtoSurgeon):
 
 
 class RemoveUnusedInitializers(ProtoSurgeon):
+    """Remove initializers that are not used as inputs to any node in the graph.
+
+    Performs cleanup by identifying and removing unused constant initializers from the model.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_remove_unused_initializers
 
@@ -1422,6 +1452,13 @@ class RemoveUnusedInitializers(ProtoSurgeon):
 
 
 class ReduceMaxMin(ProtoSurgeon):
+    """Transform ReduceMax and ReduceMin operations for DLA compatibility.
+
+    Applies transformations to ReduceMax/ReduceMin nodes to ensure proper behavior with 4D tensors.
+    May include adding Reshape operations after reduction and updating axis/keepdims attributes.
+    Note: This references a function that may not exist in current dla_transforms.py.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_reducemax_min
 
@@ -1430,6 +1467,12 @@ class ReduceMaxMin(ProtoSurgeon):
 
 
 class ReduceMinKeepdimsGT(ProtoSurgeon):
+    """Set keepdims=1 for all ReduceMin nodes in the graph.
+
+    Ensures that ReduceMin operations maintain dimensions after reduction for DLA compatibility.
+    Only processes nodes that haven't been previously transformed.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_reducemin_keepdims_gt
 
@@ -1438,6 +1481,12 @@ class ReduceMinKeepdimsGT(ProtoSurgeon):
 
 
 class Non4DTile(ProtoSurgeon):
+    """Transform non-4D Tile operations to 4D by adding leading dimension.
+
+    Converts 3D Tile shapes to 4D by inserting dimension 1 at position 0.
+    Ensures Tile operations work correctly with DLA's 4D tensor requirements.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_non4d_tile
 
@@ -1446,6 +1495,13 @@ class Non4DTile(ProtoSurgeon):
 
 
 class ArgMax(ProtoSurgeon):
+    """Transform ArgMax nodes for non-4D tensor compatibility.
+
+    For all ArgMax nodes, adjusts axis based on input dimensions: 2D (+2), 3D (+1).
+    Sets keepdims=1 and adds Reshape operations when keepdims was originally 0.
+    Ensures ArgMax operations work correctly after tensor expansion to 4D format.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_argmax
 
@@ -1454,6 +1510,14 @@ class ArgMax(ProtoSurgeon):
 
 
 class Non4DConcatAxis(ProtoSurgeon):
+    """Transform Concat node axes for non-4D tensors.
+
+    For all Concat nodes, adjusts axis based on input tensor dimensions:
+    - If all inputs are 3D, increment axis by 1
+    - If all inputs are 2D, increment axis by 2
+    Should be applied at the beginning of the transform pipeline for proper axis mapping.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_non4d_concat_axis
 
@@ -1462,6 +1526,13 @@ class Non4DConcatAxis(ProtoSurgeon):
 
 
 class Split(ProtoSurgeon):
+    """Transform Split node axes for non-4D tensors.
+
+    Adjusts axis attributes based on input dimensionality: 2D (+2), 3D (+1), 5D (-1).
+    Ensures proper axis mapping when tensors are transformed to 4D format.
+    Maintains Split operation semantics while adapting to DLA's tensor requirements.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_split
 
@@ -1470,6 +1541,13 @@ class Split(ProtoSurgeon):
 
 
 class TopK(ProtoSurgeon):
+    """Transform TopK node axes for non-4D tensors.
+
+    Adjusts axis attributes based on input dimensionality: 2D (+2), 3D (+1).
+    Ensures TopK operations work correctly with 4D tensor transformations.
+    Maintains TopK functionality while adapting to DLA's tensor format requirements.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_topk
 
@@ -1478,6 +1556,13 @@ class TopK(ProtoSurgeon):
 
 
 class ReshapeTransposeReshape(ProtoSurgeon):
+    """Transform Reshape-Transpose-Reshape pattern to slice-based operations.
+
+    Finds the 3-node pattern with 5D intermediate shapes and replaces with slice operations.
+    Slices input into 6 tensors along first dimension, processes each through reshape-transpose-reshape.
+    Concatenates results to maintain numerical equivalence while optimizing for DLA parallelization.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_reshape_transpose_reshape
 
@@ -1486,6 +1571,13 @@ class ReshapeTransposeReshape(ProtoSurgeon):
 
 
 class ReshapeClipTransposeClipReshape(ProtoSurgeon):
+    """Transform Reshape-Clip-Transpose-Clip-Reshape pattern to slice-based operations.
+
+    Finds the 5-node pattern and replaces with slice operations along first dimension.
+    Each slice is reshaped to 4x4x115x199, transposed to 115x4x199x4, then concatenated.
+    Optimizes complex transformation patterns for better DLA performance and parallelization.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_reshape_clip_transpose_clip_reshape
 
@@ -1494,6 +1586,13 @@ class ReshapeClipTransposeClipReshape(ProtoSurgeon):
 
 
 class SqueezeUnsqueezeToReshape(ProtoSurgeon):
+    """Convert Squeeze-Unsqueeze pairs to a single Reshape operation.
+
+    Detects and optimizes Squeeze-Unsqueeze pairs by replacing them with equivalent Reshape nodes.
+    Uses a fixed shape of [1,1,-1,1] for the Reshape operation to maintain DLA compatibility.
+    Reduces unnecessary dimension operations and improves graph efficiency.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_squeeze_unsqueeze_to_reshape
 
@@ -1502,6 +1601,14 @@ class SqueezeUnsqueezeToReshape(ProtoSurgeon):
 
 
 class Non4DSliceAxis(ProtoSurgeon):
+    """Transform Slice node axes for non-4D tensors.
+
+    For all Slice nodes, adjusts axis based on input tensor dimensions:
+    - If input is 2D, increment axis by 2
+    - If input is 3D, increment axis by 1
+    Should be applied at the beginning of the transform pipeline for proper axis mapping.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_non4d_slice_axis
 
@@ -1510,6 +1617,13 @@ class Non4DSliceAxis(ProtoSurgeon):
 
 
 class FixInstanceNormChannelMismatchPSD6(ProtoSurgeon):
+    """Fix InstanceNormalization channel dimension mismatches for PSD6 models.
+
+    For each InstanceNormalization node, checks if input's channel dimension matches scale length.
+    If mismatch is found, inserts a Reshape before the node that rotates input shape left by one.
+    Example transformation: [1,2,3,4] -> [2,3,4,1] to align channel dimensions properly.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_fix_instancenorm_channel_mismatch_psd6
 
@@ -1518,6 +1632,13 @@ class FixInstanceNormChannelMismatchPSD6(ProtoSurgeon):
 
 
 class DecomposeLSTM(ProtoSurgeon):
+    """Decompose ONNX LSTM nodes into basic ONNX operations.
+
+    Breaks down LSTM nodes into individual MatMul, Add, Sigmoid, Tanh, and Mul operations.
+    Creates separate processing paths for input, forget, output, and cell gates.
+    Only supports single-layer, unidirectional LSTM for clarity and DLA compatibility.
+    """
+
     def __call__(self, model: ModelProto):
         from olive.passes.onnx.dla_transforms import transform_decompose_lstm
 

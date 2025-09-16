@@ -97,6 +97,7 @@ def calculate_clip_range(node, model):
 # When C==1, convert it to 1x1 Conv using TRANSPOSE + CONV + TRANSPOSE sequence
 ###
 def transform_matmul_to_transpose_conv_transpose(model):
+    """Replace 2D Gemm/MatMul operations with Transpose-Conv-Transpose sequence."""
     cnt = 0
     graph = model.graph
     tensor_name_dim_map = get_tensor_shape_map(graph.value_info)
@@ -312,6 +313,11 @@ def transform_matmul_to_transpose_conv_transpose(model):
 
 
 def transform_remove_intermediary_squeeze_and_unsqueeze(model):
+    """Remove intermediary Squeeze/Unsqueeze nodes and replace with Reshape operations.
+
+    Handles special case of Squeeze with axis 2 and 5D input by converting to Reshape.
+    Also replaces eligible Unsqueeze nodes with Reshape.
+    """
     graph = model.graph
     input_names = {input_.name for input_ in graph.input}
     output_names = {output.name for output in graph.output}
@@ -495,6 +501,10 @@ def transform_remove_intermediary_squeeze_and_unsqueeze(model):
 
 
 def transform_qdq_to_clip(model):
+    """Replace QuantizeLinear and DequantizeLinear pairs with Clip nodes.
+
+    Converts QDQ pairs to Clip operations for uint16/int16 datatypes.
+    """
     cnt = 0
     qualin_name_node_map, deqlin_name_node_map = (
         {},
@@ -565,6 +575,11 @@ def transform_qdq_to_clip(model):
 
 
 def transform_remove_qdq(model, keep_clip_after_inputs=False):
+    """Remove QuantizeLinear and DequantizeLinear node pairs from the graph.
+
+    Handles various scenarios including consecutive QDQ pairs and graph input/output connections.
+    Optionally keeps Clip nodes after inputs to limit input range when keep_clip_after_inputs=True.
+    """
     q_output_to_q_node_map, dq_input_to_dq_node_map = {}, {}  # q_output_name -> q_node, dq_input_name -> dq_node
     graph = model.graph
     node_datatype_map = {}  # node_name -> datatype
@@ -661,6 +676,11 @@ def transform_remove_qdq(model, keep_clip_after_inputs=False):
 
 
 def transform_remove_deqlin(model):
+    """Remove DequantizeLinear nodes and replace with dequantized initializers.
+
+    Converts DequantizeLinear operations on initializers to pre-computed float32 values.
+    """
+
     def dequantize_initializer(deq_initializers, node, graph):
         node_input = node.input
         x = None
@@ -720,7 +740,11 @@ def transform_remove_deqlin(model):
 
 
 def transform_non4d_model_inputs(model):
-    """Add Unsqueeze node to model inputs if input is 2D or 3D. Special case is if there's already an Unsqueeze node."""
+    """Add Unsqueeze nodes to model inputs if they are 2D or 3D.
+
+    Transforms non-4D model inputs to 4D by adding Unsqueeze operations.
+    Handles special cases where Unsqueeze nodes already exist and updates their axes accordingly.
+    """
     cnt = 0
     graph = model.graph
     unsqueeze_to_add = []
@@ -810,6 +834,8 @@ def transform_non4d_model_inputs(model):
 
 # Add Squeeze to non 4D model outputs
 def transform_non4d_model_outputs(model):
+    """Add Squeeze nodes to non-4D model outputs to ensure 4D compatibility."""
+
     def is_squeeze_clip_output_pattern(squeeze_node, model):
         squeeze_output = squeeze_node.output[0]
         graph_output_names = [output.name for output in model.graph.output]
@@ -921,6 +947,10 @@ def get_shape_from_graph(graph, name):
 
 
 def transform_reducemin_keepdims_gt(model):
+    """Set keepdims=1 for all ReduceMin nodes in the graph.
+
+    Ensures that ReduceMin operations maintain dimensions after reduction.
+    """
     graph = model.graph
     for node in graph.node:
         if node.op_type == "ReduceMin" and "transformed" not in node.name:
@@ -929,9 +959,12 @@ def transform_reducemin_keepdims_gt(model):
                     attr.i = 1
 
 
-def transform_standalone_reducesum_reducemean(
-    model,
-):
+def transform_standalone_reducesum_reducemean(model):
+    """Transform standalone ReduceSum/ReduceMean/ReduceMax operations for 4D compatibility.
+
+    Sets keepdims=1 and adjusts axes based on input dimensions (2D: +2, 3D: +1).
+    Adds Reshape nodes when keepdims was originally 0 to maintain proper output dimensions.
+    """
     graph = model.graph
     reshape_counter = 0  # Add counter for unique reshape shape names
     for node in graph.node:
@@ -1027,6 +1060,11 @@ def transform_standalone_reducesum_reducemean(
 
 # Change Gather indices from scalar to vector, may need to update axis
 def transform_gather(model):
+    """Transform Gather operations to handle scalar indices and axis adjustments.
+
+    Changes Gather indices from scalar to vector format and updates axis attributes.
+    Handles both initializer-based and dynamic indices with proper axis mapping.
+    """
     initializer_to_remove = None
     cnt = 0
     for node in model.graph.node:
@@ -1140,6 +1178,10 @@ def transform_gather(model):
 # -
 # """
 def transform_gatherelements(model):
+    """Transform GatherElements operations for 4D compatibility.
+
+    Changes GatherElements indices from scalar to vector and reshapes 3D indices to 4D.
+    """
     cnt = 0
     for node in model.graph.node:
         if node.op_type == "GatherElements":
@@ -1177,6 +1219,10 @@ def transform_gatherelements(model):
 
 
 def transform_non4d_initializers(model):
+    """Transform non-4D initializers to 4D by adding appropriate dimensions.
+
+    Expands 1D, 2D, and 3D initializers to 4D format based on their usage context.
+    """
     # Purpose of need_to_expand_4D_init_names is to avoid expanding some 1D initializers such as axes, slice_begin
     need_to_expand_4d_init_names = []
     skip_init_names = []
@@ -1247,6 +1293,10 @@ def transform_non4d_initializers(model):
 
 
 def transform_remove_all_tensor_value_shapes(model):
+    """Remove all tensor value shape information from the graph.
+
+    Clears shape fields from all value_info tensors to allow for dynamic shape inference.
+    """
     for value_info in model.graph.value_info:
         tensor_type = value_info.type.tensor_type
         if tensor_type.HasField("shape"):
@@ -1254,6 +1304,10 @@ def transform_remove_all_tensor_value_shapes(model):
 
 
 def transform_non4d_reshape(model):
+    """Transform non-4D Reshape operations to 4D by adding leading dimensions.
+
+    Converts 2D, 3D, and 5D reshape shapes to 4D format by adding appropriate dimensions.
+    """
     cnt = 0
     for node in model.graph.node:
         if node.op_type == "Reshape":
@@ -1319,6 +1373,10 @@ def transform_non4d_reshape(model):
 
 
 def transform_non4d_expand(model):
+    """Transform non-4D Expand operations to 4D by adding leading dimension.
+
+    Converts 3D Expand shapes to 4D by inserting dimension 1 at position 0.
+    """
     cnt = 0
     for node in model.graph.node:
         if node.op_type == "Expand":
@@ -1335,6 +1393,10 @@ def transform_non4d_expand(model):
 
 
 def transform_non4d_tile(model):
+    """Transform non-4D Tile operations to 4D by adding leading dimension.
+
+    Converts 3D Tile shapes to 4D by inserting dimension 1 at position 0.
+    """
     cnt = 0
     for node in model.graph.node:
         if node.op_type == "Tile":
@@ -1384,6 +1446,10 @@ def transform_non4d_transpose(model):
 
 # Transform LpNormalization axes of non4D tensors
 def transform_non4d_lpnorm(model):
+    """Transform LpNormalization axes of non-4D tensors to use axis=-1.
+
+    Sets all LpNormalization operations to use the last axis (-1) for normalization.
+    """
     cnt = 0
     for node in model.graph.node:
         if node.op_type == "LpNormalization":
@@ -1396,6 +1462,10 @@ def transform_non4d_lpnorm(model):
 
 # Flatten to Reshape
 def transform_flatten(model):
+    """Transform Flatten operations to Reshape with shape [1, 1, 1, -1].
+
+    Replaces all Flatten nodes with equivalent Reshape operations using 4D shape.
+    """
     nodes_to_remove = []
     for node in model.graph.node:
         if node.op_type == "Flatten":
@@ -1415,6 +1485,7 @@ def transform_flatten(model):
 
 # Debug function to add intermediate tensors to outputs
 def transform_add_intermediate_tensors_to_outputs(model, intermediate_tensor_to_add=None):
+    """Add intermediate tensors as outputs for debugging purposes."""
     # Get existing output names
     existing_outputs = {output.name for output in model.graph.output}
 
@@ -1506,6 +1577,7 @@ def reshape_reducesum_pattern(op, x, shape, axes):
 
 
 def slice_reducesum_concat(op, x, shape, axes):
+    """Create slice-reducesum-concat pattern to replace reshape-reducesum."""
     slice_0_starts = op.initializer(ir.tensor([0], dtype=ir.DataType.INT64, name=x.name + "_slice_0_starts"))
     slice_0_ends = op.initializer(ir.tensor([4], dtype=ir.DataType.INT64, name=x.name + "_slice_0_ends"))
     slice_1_starts = op.initializer(ir.tensor([4], dtype=ir.DataType.INT64, name=x.name + "_slice_1_starts"))
@@ -1519,6 +1591,7 @@ def slice_reducesum_concat(op, x, shape, axes):
 
 
 def transform_reshape_reducesum(model):
+    """Transform Reshape-ReduceSum patterns using onnxscript rewriter."""
     reshape_reducesum_rule = pattern.RewriteRule(reshape_reducesum_pattern, slice_reducesum_concat, verbose=10)
     return onnxscript.rewriter.rewrite(
         model,
@@ -1801,6 +1874,11 @@ def reducemax_pattern(op, data, axes, keepdims):
 
 
 def reducemax_reshape(op, data, axes, keepdims):
+    """Create ReduceMax-Reshape pattern replacement.
+
+    Implements the replacement pattern that applies ReduceMax with fixed axes and keepdims,
+    then reshapes the output to a fixed 4D shape [1, 1, 1, 3600].
+    """
     new_axes = op.initializer(ir.tensor([3], dtype=ir.DataType.INT64, name=data.name + "_reducemax_axes"))
     new_keepdims = op.initializer(ir.value(1, dtype=ir.DataType.INT64, name=data.name + "_reducemax_keepdim"))
     reducemax_output = op.Reducemax(data, new_axes, new_keepdims)
@@ -1811,6 +1889,10 @@ def reducemax_reshape(op, data, axes, keepdims):
 
 
 def transform_reducemax(model):
+    """Transform ReduceMax patterns using onnxscript rewriter.
+
+    Applies pattern matching to add Reshape operations after ReduceMax nodes.
+    """
     reducemax_rule = pattern.RewriteRule(reducemax_pattern, reducemax_reshape, verbose=10)
     return onnxscript.rewriter.rewrite(
         model,
@@ -1941,6 +2023,10 @@ def all_tensors_are_4d(model):
 
 
 def transform_split(model):
+    """Transform Split node axes for non-4D tensors.
+
+    Adjusts axis attributes based on input dimensionality: 2D (+2), 3D (+1), 5D (-1).
+    """
     graph = model.graph
     for node in graph.node:
         if node.op_type == "Split":
@@ -1958,6 +2044,11 @@ def transform_split(model):
 
 
 def transform_topk(model):
+    """Transform TopK node axes for non-4D tensors.
+
+    Adjusts axis attributes based on input dimensionality: 2D (+2), 3D (+1).
+    Ensures TopK operations work correctly with 4D tensor transformations.
+    """
     graph = model.graph
     for node in graph.node:
         if node.op_type == "TopK":
@@ -2660,6 +2751,11 @@ def transform_decompose_lstm(model):
 
 
 def transform_reshape_clip_reducesum_manual(model):
+    """Manually transform Reshape-Clip-ReduceSum patterns to Slice-Clip-ReduceSum-Concat.
+
+    Replaces the pattern with slice-based operations that split along axis 3.
+    Creates two parallel branches with Slice-Clip-ReduceSum and concatenates results.
+    """
     graph = model.graph
     nodes_to_remove = []
     nodes_to_add = []
