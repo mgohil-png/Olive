@@ -31,8 +31,6 @@ from olive.passes.pass_config import BasePassConfig, PassConfigParam
 
 logger = logging.getLogger(__name__)
 
-clip_needed = True
-
 # pylint: disable=W0621
 
 
@@ -1390,7 +1388,6 @@ class RemoveQDQ(ProtoSurgeon):
     """Remove QuantizeLinear and DequantizeLinear node pairs from the graph.
 
     Handles various scenarios including consecutive QDQ pairs and graph input/output connections.
-    Can optionally replace QDQ pairs with Clip nodes or remove them entirely based on configuration.
     Supports keeping Clip nodes after inputs to limit input range when keep_clip_after_inputs=True.
     """
 
@@ -1398,12 +1395,9 @@ class RemoveQDQ(ProtoSurgeon):
         self.keep_clip_after_inputs = keep_clip_after_inputs
 
     def __call__(self, model: ModelProto):
-        from olive.passes.onnx.dla_transforms import transform_qdq_to_clip, transform_remove_qdq
+        from olive.passes.onnx.dla_transforms import transform_remove_qdq
 
-        if clip_needed:
-            transform_qdq_to_clip(model)
-        else:
-            transform_remove_qdq(model, self.keep_clip_after_inputs)
+        transform_remove_qdq(model, keep_clip_after_inputs=self.keep_clip_after_inputs)
         return model
 
 
