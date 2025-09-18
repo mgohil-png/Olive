@@ -1,8 +1,5 @@
 {
-    "input_model": {
-        "type": "ONNXModel",
-        "config": { "model_path": "D:\\megh\\Olive\\models\\PSA_v2_finalrev-v2.2.0.onnx" }
-    },
+    "input_model": { "type": "ONNXModel", "config": { "model_path": "" } },
     "passes": {
         "dla_transforms": {
             "type": "GraphSurgeries",
@@ -38,12 +35,9 @@
                     { "surgeon": "FixInstanceNormChannelMismatchPSD6" },
                     { "surgeon": "TopK" }
                 ],
-                "external_data_name": "PSA_v2_finalrev-v2.2.0_data.bin"
+                "external_data_name": ""
             }
         }
     },
-    "engine": {
-        "output_dir": "D:\\megh\\Olive\\models\\output_models\\PSA_v2_finalrev-v2.2.0_transformed",
-        "clean_cache": true
-    }
+    "engine": { "output_dir": "", "clean_cache": true }
 }

@@ -709,13 +709,58 @@ def transform_remove_deqlin(model):
             np.float32
         )  # Might have type issues: X, zero_point uint16, scale float32
 
+    def create_tensor_consumer_map(graph):
+        tensor_consumer_map = {}
+        for node in graph.node:
+            for input_name in node.input:
+                if input_name not in tensor_consumer_map:
+                    tensor_consumer_map[input_name] = {}
+                tensor_consumer_map[input_name][node.name] = node
+        return tensor_consumer_map
+
     cnt = 0
     graph = model.graph
+    tensor_consumer_map = create_tensor_consumer_map(graph)
+
     initializer_names = {init.name for init in graph.initializer}
     deqlin_output_initializer_mapping = {}
     nodes_to_remove = []
     for node in graph.node:
         if node.op_type == "DequantizeLinear" and len(node.input) > 0 and node.input[0] in initializer_names:
+            # check if the consumer of output_node of DequantizeLinear is Conv and ConvTranspose
+            zero_point_initializer = get_initializer_by_name(model, node.input[2])
+            zero_point_initializer_dtype = zero_point_initializer.dtype
+            dq_output_name = node.output[0]
+            consumer = tensor_consumer_map.get(dq_output_name)
+
+            # Check if we should skip dequantization based on the specified rules
+            should_skip = False
+            if consumer and len(consumer.keys()) == 1:
+                single_consumer = next(iter(consumer.values()))
+
+                # Check if DQ output goes to the second (weight) input of Conv/ConvTranspose
+                consumer_inputs = single_consumer.input
+
+                # Rule 1: Conv node at second input with int4/int8/uint8 zero point
+                conv_condition = (
+                    single_consumer.op_type == "Conv"
+                    and len(consumer_inputs) > 1
+                    and consumer_inputs[1] == dq_output_name
+                    and zero_point_initializer_dtype in ("int8", "uint8", "int4")
+                )
+
+                # Rule 2: ConvTranspose node at second input with int8/uint8 zero point
+                convtranspose_condition = (
+                    single_consumer.op_type == "ConvTranspose"
+                    and len(consumer_inputs) > 1
+                    and consumer_inputs[1] == dq_output_name
+                    and zero_point_initializer_dtype in ("int8", "uint8")
+                )
+                if conv_condition or convtranspose_condition:
+                    should_skip = True
+
+            if should_skip:
+                continue
             deq_initializers = [init for init in graph.initializer if init.name in node.input]
             dequantized_arr = dequantize_initializer(deq_initializers, node, graph).astype(np.float32)
             # Create new initializer with fresh name and float32 datatype
